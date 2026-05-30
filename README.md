@@ -76,6 +76,41 @@ Preferred configuration after the package is published to npm:
 }
 ```
 
+### opencode
+
+opencode defines MCP servers under the `mcp` field in `opencode.jsonc`.
+For BT-7274, add a local MCP server entry:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "bt-7274": {
+      "type": "local",
+      "command": ["npx", "-y", "bt-7274"],
+      "enabled": true
+    }
+  }
+}
+```
+
+During local development from a cloned repository:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "bt-7274": {
+      "type": "local",
+      "command": ["node", "/home/tars/projects/BT-7274/src/server.js"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Reference: [opencode MCP servers documentation](https://opencode.ai/docs/mcp-servers).
+
 Development configuration from a cloned repository:
 
 ```json

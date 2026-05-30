@@ -74,6 +74,41 @@ npm start
 }
 ```
 
+### opencode
+
+opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可以按如下方式
+配置为本地 MCP server：
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "bt-7274": {
+      "type": "local",
+      "command": ["npx", "-y", "bt-7274"],
+      "enabled": true
+    }
+  }
+}
+```
+
+从 clone 的仓库开发时可以使用本地路径：
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "bt-7274": {
+      "type": "local",
+      "command": ["node", "/home/tars/projects/BT-7274/src/server.js"],
+      "enabled": true
+    }
+  }
+}
+```
+
+参考：[opencode MCP servers documentation](https://opencode.ai/docs/mcp-servers)。
+
 从 clone 的仓库开发时，可以使用本地路径：
 
 ```json
