@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Document Review</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="title-block">
+        <div id="sessionTitle" class="title">Document Review</div>
+        <div id="versionMeta" class="meta">Loading</div>
+      </div>
+      <nav class="tabs" aria-label="Review view">
+        <button class="tab active" data-view="preview">Preview</button>
+        <button class="tab" data-view="diff">Diff</button>
+        <button class="tab" data-view="history">History</button>
+      </nav>
+      <div class="actions">
+        <button id="submitComments" class="button secondary">提交评论</button>
+        <button id="approveReview" class="button primary">评审通过</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="toc-panel">
+        <div class="panel-title">目录</div>
+        <div id="toc" class="toc empty">No headings</div>
+      </aside>
+
+      <section class="document-panel">
+        <div id="statusBanner" class="status-banner hidden"></div>
+        <div id="previewView" class="view active">
+          <div id="document" class="document"></div>
+        </div>
+        <div id="diffView" class="view">
+          <div id="diff" class="diff"></div>
+        </div>
+        <div id="historyView" class="view">
+          <div id="history" class="history"></div>
+        </div>
+      </section>
+
+      <aside class="comments-panel">
+        <div class="panel-title">Comments</div>
+        <textarea id="generalComment" class="general-comment" placeholder="Overall feedback"></textarea>
+        <div id="commentList" class="comment-list"></div>
+      </aside>
+    </main>
+
+    <div id="commentPopover" class="popover hidden">
+      <div class="quote" id="selectedQuote"></div>
+      <textarea id="commentInput" placeholder="Add a comment"></textarea>
+      <div class="popover-actions">
+        <button id="cancelComment" class="button ghost">Cancel</button>
+        <button id="saveComment" class="button primary">Save</button>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
