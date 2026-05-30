@@ -24,9 +24,22 @@ function newId(prefix) {
   return `${prefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 }
 
+function normalizeFormat(format) {
+  if (format === 'md') return 'markdown';
+  return format;
+}
+
+function normalizeContent(content, format) {
+  const value = String(content || '');
+  if (format !== 'markdown') return value;
+  const match = value.trim().match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  return match ? match[1] : value;
+}
+
 function createSession({ title = 'Review document', format, content }) {
-  if (!['markdown', 'html'].includes(format)) {
-    throw new Error('format must be "markdown" or "html"');
+  const normalizedFormat = normalizeFormat(format);
+  if (!['markdown', 'html'].includes(normalizedFormat)) {
+    throw new Error('format must be "markdown", "md", or "html"');
   }
 
   const sessionId = newId('session');
@@ -35,7 +48,7 @@ function createSession({ title = 'Review document', format, content }) {
   const session = {
     id: sessionId,
     title,
-    format,
+    format: normalizedFormat,
     status: 'reviewing',
     createdAt,
     updatedAt: createdAt,
@@ -44,7 +57,7 @@ function createSession({ title = 'Review document', format, content }) {
       {
         id: versionId,
         number: 1,
-        content,
+        content: normalizeContent(content, normalizedFormat),
         summary: 'Initial version',
         createdAt
       }
@@ -194,7 +207,7 @@ function addVersion(session, content, summary = '') {
   const version = {
     id: `v${versionNumber}`,
     number: versionNumber,
-    content,
+    content: normalizeContent(content, session.format),
     summary,
     createdAt
   };
@@ -207,7 +220,7 @@ function addVersion(session, content, summary = '') {
 
   for (const comment of session.comments) {
     if (comment.versionId === oldVersionId && comment.status === 'submitted') {
-      comment.status = content.includes(comment.quote) ? 'addressed' : 'stale';
+      comment.status = version.content.includes(comment.quote) ? 'addressed' : 'stale';
       comment.addressedByVersionId = version.id;
     }
   }
@@ -472,7 +485,7 @@ const tools = [
       required: ['format', 'content'],
       properties: {
         title: { type: 'string' },
-        format: { type: 'string', enum: ['markdown', 'html'] },
+          format: { type: 'string', enum: ['markdown', 'md', 'html'] },
         content: { type: 'string' }
       }
     }

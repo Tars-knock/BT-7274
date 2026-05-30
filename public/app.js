@@ -37,22 +37,38 @@ function slugify(text, index) {
 }
 
 function renderMarkdown(markdown) {
-  const lines = markdown.split(/\r?\n/);
+  const normalized = String(markdown || '').trim().replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i, '$1');
+  const lines = normalized.split(/\r?\n/);
   const html = [];
   let inCode = false;
   let paragraph = [];
+  let listItems = [];
   let headingIndex = 0;
+
+  const renderInline = (value) => escapeHtml(value)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
 
   const flushParagraph = () => {
     if (paragraph.length > 0) {
-      html.push(`<p>${escapeHtml(paragraph.join(' ')).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>`);
+      html.push(`<p>${renderInline(paragraph.join(' '))}</p>`);
       paragraph = [];
+    }
+  };
+
+  const flushList = () => {
+    if (listItems.length > 0) {
+      html.push(`<ul>${listItems.map((item) => `<li>${renderInline(item)}</li>`).join('')}</ul>`);
+      listItems = [];
     }
   };
 
   for (const line of lines) {
     if (line.startsWith('```')) {
       flushParagraph();
+      flushList();
       if (inCode) {
         html.push('</code></pre>');
       } else {
@@ -70,6 +86,7 @@ function renderMarkdown(markdown) {
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       flushParagraph();
+      flushList();
       headingIndex += 1;
       const level = heading[1].length;
       const text = heading[2].trim();
@@ -79,6 +96,14 @@ function renderMarkdown(markdown) {
 
     if (!line.trim()) {
       flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const listItem = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (listItem) {
+      flushParagraph();
+      listItems.push(listItem[1]);
       continue;
     }
 
@@ -86,6 +111,7 @@ function renderMarkdown(markdown) {
   }
 
   flushParagraph();
+  flushList();
   if (inCode) html.push('</code></pre>');
   return html.join('\n');
 }
@@ -115,6 +141,11 @@ function setBanner(message) {
   }
   els.banner.textContent = message;
   els.banner.classList.remove('hidden');
+}
+
+function hidePopover() {
+  els.popover.classList.add('hidden');
+  state.selected = null;
 }
 
 async function api(path, options = {}) {
@@ -173,10 +204,15 @@ function renderHtmlFrame(content) {
       <head>
         <base target="_blank">
         <style>
-          body { margin: 0; padding: 36px 44px 72px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; color: #20231f; }
-          h1, h2, h3 { line-height: 1.2; margin-top: 1.5em; }
-          pre { background: #1f2521; color: #f6f8f5; overflow: auto; padding: 14px; border-radius: 8px; }
-          code { background: #eef2ea; padding: 2px 4px; border-radius: 4px; }
+          body { margin: 0; padding: 48px 56px 88px; background: #ffffff; font-family: "Airbnb Cereal VF", Circular, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; line-height: 1.5; color: #3f3f3f; }
+          a { color: #222222; text-decoration: underline; text-underline-offset: 3px; }
+          h1, h2, h3, h4, h5, h6 { color: #222222; line-height: 1.2; margin: 1.6em 0 0.65em; font-weight: 600; letter-spacing: 0; }
+          h1 { font-size: 28px; }
+          h2 { font-size: 22px; }
+          h3 { font-size: 20px; }
+          p, li { font-size: 16px; line-height: 1.5; }
+          pre { background: #f7f7f7; color: #222222; overflow: auto; padding: 18px; border: 1px solid #dddddd; border-radius: 14px; }
+          code { background: #f7f7f7; color: #222222; padding: 2px 6px; border-radius: 8px; }
           pre code { background: transparent; padding: 0; }
         </style>
       </head>
@@ -185,6 +221,9 @@ function renderHtmlFrame(content) {
   `;
   frame.addEventListener('load', () => {
     const frameDoc = frame.contentDocument;
+    frameDoc.addEventListener('mousedown', () => {
+      if (!els.popover.classList.contains('hidden')) hidePopover();
+    });
     frameDoc.addEventListener('mouseup', () => handleSelection(frameDoc, frameDoc.body, frame));
     renderToc(frameDoc.body, frame);
   }, { once: true });
@@ -336,20 +375,34 @@ function handleSelection(selectionDocument, root, frame = null) {
 }
 
 document.getElementById('cancelComment').addEventListener('click', () => {
-  els.popover.classList.add('hidden');
-  state.selected = null;
+  hidePopover();
 });
 
 document.getElementById('saveComment').addEventListener('click', async () => {
   if (!state.selected || !els.commentInput.value.trim()) return;
-  await api(`/api/sessions/${state.sessionId}/comments`, {
-    method: 'POST',
-    body: JSON.stringify({ ...state.selected, comment: els.commentInput.value.trim() })
-  });
-  els.popover.classList.add('hidden');
-  state.selected = null;
-  window.getSelection().removeAllRanges();
-  await loadSession();
+  try {
+    await api(`/api/sessions/${state.sessionId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ ...state.selected, comment: els.commentInput.value.trim() })
+    });
+    hidePopover();
+    window.getSelection().removeAllRanges();
+    await loadSession();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.addEventListener('mousedown', (event) => {
+  if (els.popover.classList.contains('hidden')) return;
+  if (els.popover.contains(event.target)) return;
+  hidePopover();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !els.popover.classList.contains('hidden')) {
+    hidePopover();
+  }
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {
