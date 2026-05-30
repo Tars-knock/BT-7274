@@ -1,7 +1,10 @@
-# Review MCP
+# BT-7274
 
-Review MCP 是一个本地 MCP server，用于在 agent 工作流中审阅大模型生成的
+BT-7274 是一个本地 MCP server，用于在 agent 工作流中审阅大模型生成的
 Markdown / HTML 文档。
+
+项目名来自《Titanfall》中的 BT-7274。它的目标是帮助用户与 agent 像铁驭和
+BT 一样紧密协作。
 
 它会创建一个浏览器评审页面。开发者可以在页面中预览文档、通过左侧目录树跳转
 章节、圈选文字、添加多条评论、一次性提交评论，或者直接评审通过当前版本。agent
@@ -29,10 +32,10 @@ Markdown / HTML 文档。
 
 当前 MVP 不需要安装 npm 依赖。
 
-## 本地运行
+## 快速开始
 
 ```bash
-npm start
+npx -y bt-7274
 ```
 
 评审页面默认监听：
@@ -47,23 +50,36 @@ http://127.0.0.1:8787
 REVIEW_MCP_HOST=127.0.0.1 \
 REVIEW_MCP_PORT=8787 \
 REVIEW_MCP_BASE_URL=http://127.0.0.1:8787 \
+npx -y bt-7274
+```
+
+从 clone 的仓库本地开发时使用：
+
+```bash
 npm start
 ```
 
 ## MCP Client 配置
 
-把 MCP client 配置为启动：
-
-```bash
-node /home/tars/projects/BT-7274/src/server.js
-```
-
-示例配置：
+包发布到 npm 后，推荐使用 `npx` 配置，不需要用户 clone 仓库或记住本地路径：
 
 ```json
 {
   "mcpServers": {
-    "review-mcp": {
+    "bt-7274": {
+      "command": "npx",
+      "args": ["-y", "bt-7274"]
+    }
+  }
+}
+```
+
+从 clone 的仓库开发时，可以使用本地路径：
+
+```json
+{
+  "mcpServers": {
+    "bt-7274": {
       "command": "node",
       "args": ["/home/tars/projects/BT-7274/src/server.js"]
     }
@@ -74,7 +90,7 @@ node /home/tars/projects/BT-7274/src/server.js
 ## 评审流程
 
 1. agent 调用 `create_review_session`，提交 Markdown 或 HTML 文档。
-2. Review MCP 返回 `reviewUrl` 和提示文案。
+2. BT-7274 返回 `reviewUrl` 和提示文案。
 3. agent 把 URL 展示给用户，并调用 `wait_for_review` 等待。
 4. 用户在浏览器中打开评审页面。
 5. 用户可以：

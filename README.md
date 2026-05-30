@@ -1,9 +1,12 @@
-# Review MCP
+# BT-7274
 
-A local MCP server for reviewing AI-generated Markdown and HTML documents in a
-browser before accepting them back into an agent workflow.
+BT-7274 is a local MCP server for reviewing AI-generated Markdown and HTML
+documents in a browser before accepting them back into an agent workflow.
 
-Review MCP creates a browser-based review page where a developer can preview a
+The name is inspired by BT-7274 from Titanfall: the project is designed to help
+users and agents collaborate as closely as a Pilot and BT.
+
+BT-7274 creates a browser-based review page where a developer can preview a
 document, navigate it with a heading tree, select text, leave multiple comments,
 submit comments as a batch, or approve the current version. The agent can wait
 for the review result, revise the document, and publish a new version into the
@@ -31,10 +34,10 @@ same review session.
 
 No npm dependencies are required for the current MVP.
 
-## Run Locally
+## Quick Start
 
 ```bash
-npm start
+npx -y bt-7274
 ```
 
 The HTTP review UI listens on:
@@ -49,23 +52,36 @@ You can override the default host, port, and externally visible base URL:
 REVIEW_MCP_HOST=127.0.0.1 \
 REVIEW_MCP_PORT=8787 \
 REVIEW_MCP_BASE_URL=http://127.0.0.1:8787 \
+npx -y bt-7274
+```
+
+For local development from a cloned repository:
+
+```bash
 npm start
 ```
 
 ## MCP Client Configuration
 
-Configure your MCP client to launch:
-
-```bash
-node /home/tars/projects/BT-7274/src/server.js
-```
-
-Example configuration shape:
+Preferred configuration after the package is published to npm:
 
 ```json
 {
   "mcpServers": {
-    "review-mcp": {
+    "bt-7274": {
+      "command": "npx",
+      "args": ["-y", "bt-7274"]
+    }
+  }
+}
+```
+
+Development configuration from a cloned repository:
+
+```json
+{
+  "mcpServers": {
+    "bt-7274": {
       "command": "node",
       "args": ["/home/tars/projects/BT-7274/src/server.js"]
     }
@@ -76,7 +92,7 @@ Example configuration shape:
 ## Review Flow
 
 1. The agent calls `create_review_session` with a Markdown or HTML document.
-2. Review MCP returns a `reviewUrl` and an instruction string.
+2. BT-7274 returns a `reviewUrl` and an instruction string.
 3. The agent shows the URL to the user and calls `wait_for_review`.
 4. The user opens the review page in a browser.
 5. The user either:

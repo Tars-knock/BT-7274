@@ -1,11 +1,26 @@
 {
-  "name": "bt-7274-review-mcp",
+  "name": "bt-7274",
   "version": "0.1.0",
-  "description": "MCP review server for Markdown and HTML documents.",
+  "description": "A local MCP review server for seamless human-agent document collaboration.",
   "type": "module",
   "bin": {
+    "bt-7274": "./src/server.js",
     "review-mcp": "./src/server.js"
   },
+  "files": [
+    "src",
+    "public",
+    "docs",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "review",
+    "markdown",
+    "html",
+    "agent"
+  ],
   "scripts": {
     "start": "node src/server.js",
     "check": "node --check src/server.js"
