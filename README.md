@@ -1,52 +1,54 @@
 # BT-7274
 
-BT-7274 is a local MCP server for reviewing AI-generated Markdown and HTML
-documents in a browser before accepting them back into an agent workflow.
+面向 AI Agent 工作流的本地文档评审台。
 
-The name is inspired by BT-7274 from Titanfall: the project is designed to help
-users and agents collaborate as closely as a Pilot and BT.
+BT-7274 让 Agent 生成的 Markdown 或 HTML 不再只能停留在聊天窗口里反复粘贴修改。Agent 可以把文档发布到一个本地浏览器评审页，用户在页面里预览、标注、提交意见或直接通过，Agent 再根据结构化反馈继续修改，直到最终版本被确认。
 
-BT-7274 creates a browser-based review page where a developer can preview a
-document, navigate it with a heading tree, select text, leave multiple comments,
-submit comments as a batch, or approve the current version. The agent can wait
-for the review result, revise the document, and publish a new version into the
-same review session.
+它适合用来评审实现方案、PR 描述、产品文档、技术设计、发布说明、报告草稿，以及任何需要“人类最终把关”的 AI 生成文档。
 
-[简体中文说明](./docs/README.zh-CN.md)
+## 为什么需要它
 
-## Features
+AI 擅长快速产出草稿，但文档验收通常需要更清楚的上下文：
 
-- Markdown and HTML document review sessions
-- Browser preview with a left-side heading tree
-- Text selection comments with quote and surrounding context
-- Batch comment submission through a single `提交评论` action
-- Explicit approval through `评审通过`
-- Warning confirmation when approving with unresolved comments
-- Version history and diff against the previous version
-- Agent wait flow through MCP tools
-- Local-only in-memory storage for the MVP
-- Sandboxed HTML preview with scripts removed by default
+- 在浏览器里看最终排版，而不是在终端或聊天气泡里猜效果
+- 对具体文本片段发表评论，而不是写“第三段有问题”
+- 一次性提交所有意见，让 Agent 获得完整修改上下文
+- 保留版本历史和 diff，确认 Agent 是否真的改对了
+- 通过明确的“评审通过”结束流程，避免口头确认丢失
 
-## Requirements
+BT-7274 把这些步骤做成本地 MCP 工具和浏览器界面，既保留 Agent 自动化能力，也让用户拥有清晰的评审控制权。
 
-- Node.js 20 or newer
-- An MCP client that can launch a stdio MCP server
+## 产品体验
 
-No npm dependencies are required for the current MVP.
+- **文档预览**：支持 Markdown 和 HTML，Markdown 使用 `markdown-it` 渲染，HTML 会移除脚本并在沙箱中预览。
+- **目录导航**：自动提取标题，长文档可以快速跳转。
+- **划词评论**：选中文本即可添加评论，评论会携带引用、上下文和文本位置。
+- **批量提交**：草稿评论可以集中提交给 Agent，并附带整体反馈。
+- **版本迭代**：Agent 更新文档后，同一个评审页会展示新版本。
+- **Diff 与历史**：查看上一版和当前版的差异，追踪每轮修改。
+- **明确批准**：点击 `评审通过` 后，Agent 会收到已批准的最终内容。
+- **本地优先**：服务运行在本机，评审会话持久化到项目目录下的 `.bt-7274/sessions`。
 
-## Quick Start
+## 快速开始
+
+要求：
+
+- Node.js 20 或更新版本
+- 支持 MCP stdio server 的客户端
+
+通过 GitHub 源直接运行：
 
 ```bash
 npx -y github:Tars-knock/BT-7274
 ```
 
-The HTTP review UI listens on:
+默认评审界面地址：
 
 ```text
 http://127.0.0.1:8787
 ```
 
-You can override the default host, port, and externally visible base URL:
+如需指定监听地址、端口或对外展示的基础 URL：
 
 ```bash
 REVIEW_MCP_HOST=127.0.0.1 \
@@ -55,15 +57,16 @@ REVIEW_MCP_BASE_URL=http://127.0.0.1:8787 \
 npx -y github:Tars-knock/BT-7274
 ```
 
-For local development from a cloned repository:
+本地开发：
 
 ```bash
+npm install
 npm start
 ```
 
-## MCP Client Configuration
+## 接入 MCP 客户端
 
-Recommended configuration using the GitHub package source:
+通用 MCP 配置：
 
 ```json
 {
@@ -76,10 +79,7 @@ Recommended configuration using the GitHub package source:
 }
 ```
 
-### opencode
-
-opencode defines MCP servers under the `mcp` field in `opencode.jsonc`.
-For BT-7274, add a local MCP server entry:
+opencode 配置：
 
 ```jsonc
 {
@@ -94,7 +94,7 @@ For BT-7274, add a local MCP server entry:
 }
 ```
 
-During local development from a cloned repository:
+从克隆仓库运行时，可以直接指向本地入口：
 
 ```jsonc
 {
@@ -109,44 +109,22 @@ During local development from a cloned repository:
 }
 ```
 
-Reference: [opencode MCP servers documentation](https://opencode.ai/docs/mcp-servers).
+## 工作流
 
-Development configuration from a cloned repository:
+1. Agent 调用 `create_review_session`，提交标题、格式和文档内容。
+2. BT-7274 返回 `reviewUrl`，Agent 把链接展示给用户。
+3. Agent 调用 `wait_for_review` 等待用户操作。
+4. 用户在浏览器里预览文档、添加评论、提交意见，或直接点击 `评审通过`。
+5. 如果用户提交评论，Agent 收到结构化评论后修改文档。
+6. Agent 调用 `update_review_document` 发布新版本。
+7. 用户在同一个页面继续评审新版本。
+8. 用户批准后，Agent 收到最终内容并结束流程。
 
-```json
-{
-  "mcpServers": {
-    "bt-7274": {
-      "command": "node",
-      "args": ["/home/tars/projects/BT-7274/src/server.js"]
-    }
-  }
-}
-```
-
-## Review Flow
-
-1. The agent calls `create_review_session` with a Markdown or HTML document.
-2. BT-7274 returns a `reviewUrl` and an instruction string.
-3. The agent shows the URL to the user and immediately calls `wait_for_review`.
-4. The user opens the review page in a browser.
-5. The user either:
-   - selects text, creates comments, and clicks `提交评论`; or
-   - clicks `评审通过` to approve the current version.
-6. `wait_for_review` returns either `comments_submitted` or `approved`.
-7. If comments were submitted, the agent revises the document and calls
-   `update_review_document`.
-8. The agent calls `wait_for_review` again for the next review round.
-9. The browser page updates to the latest version and keeps the previous version
-   available in the diff/history views.
-
-## MCP Tools
+## MCP 工具
 
 ### `create_review_session`
 
-Creates a browser review session.
-
-Input:
+创建一个浏览器评审会话。
 
 ```json
 {
@@ -156,26 +134,21 @@ Input:
 }
 ```
 
-Output:
+返回：
 
 ```json
 {
   "sessionId": "session_abc123",
   "reviewUrl": "http://127.0.0.1:8787/review/session_abc123",
-  "instruction": "请打开评审页面完成审阅：http://127.0.0.1:8787/review/session_abc123。完成后点击“提交评论”或“评审通过”。"
+  "instruction": "Show this URL to the user..."
 }
 ```
 
+`format` 支持 `markdown`、`md` 和 `html`。
+
 ### `wait_for_review`
 
-Waits for submitted comments or approval.
-
-If the call times out, the review session remains open. The agent should call
-`wait_for_review` again with the same `sessionId` unless the user canceled the
-review. Submitted comments and approvals are persisted locally, so they can be
-picked up by a later `wait_for_review` call even after the MCP process restarts.
-
-Input:
+等待用户提交评论或批准当前版本。
 
 ```json
 {
@@ -184,7 +157,7 @@ Input:
 }
 ```
 
-Comment submission output:
+用户提交评论时返回：
 
 ```json
 {
@@ -211,13 +184,7 @@ Comment submission output:
 }
 ```
 
-`position.startOffset` and `position.endOffset` are 0-based UTF-16 offsets into
-the rendered preview plain text for the reviewed version. `startOffset` is
-inclusive and `endOffset` is exclusive. These offsets are intended as anchors for
-finding the selected text together with `quote`, `prefix`, and `suffix`; they are
-not byte offsets and are not guaranteed to match Markdown or HTML source offsets.
-
-Approval output:
+用户批准时返回：
 
 ```json
 {
@@ -233,7 +200,7 @@ Approval output:
 }
 ```
 
-Timeout output:
+等待超时时返回：
 
 ```json
 {
@@ -245,9 +212,7 @@ Timeout output:
 
 ### `update_review_document`
 
-Publishes a revised document version into an existing review session.
-
-Input:
+把 Agent 修改后的内容发布为新版本。
 
 ```json
 {
@@ -257,7 +222,7 @@ Input:
 }
 ```
 
-Output:
+返回：
 
 ```json
 {
@@ -269,10 +234,7 @@ Output:
 
 ### `get_review_session`
 
-Returns the current session state, including versions, comments, batches, and
-approval status.
-
-Input:
+读取当前会话状态，包括版本、评论、批次和批准状态。
 
 ```json
 {
@@ -280,36 +242,33 @@ Input:
 }
 ```
 
-## Comment Statuses
+## 评论状态
 
-- `draft`: created in the browser but not submitted to the agent
-- `submitted`: submitted to the agent in a batch
-- `addressed`: a new document version was published after the comment
-- `resolved`: reviewer confirmed the comment is resolved
-- `stale`: the original quoted text can no longer be found in the new version
+- `draft`：用户在浏览器里创建，还没有提交给 Agent
+- `submitted`：已经作为一个批次提交给 Agent
+- `addressed`：Agent 发布了新版本，原评论等待用户确认
+- `resolved`：用户确认该评论已经解决
+- `stale`：新版本里找不到原始引用文本
 
-Unresolved statuses are `draft`, `submitted`, `addressed`, and `stale`. If the
-reviewer clicks `评审通过` while unresolved comments exist, the page shows a
-confirmation warning before approving.
+如果还有未解决评论，用户点击 `评审通过` 时页面会先显示确认提醒。
 
-## Security Notes
+## 安全与边界
 
-- The server is intended for local development use.
-- Session data is kept in memory and is lost when the process exits.
-- Markdown is rendered by the built-in lightweight renderer.
-- HTML is sanitized and displayed in a sandboxed iframe.
-- Generated HTML scripts are removed by default.
+- BT-7274 面向本地开发和本机评审场景，不建议直接暴露到公网。
+- 会话数据保存在项目目录 `.bt-7274/sessions`，不是多用户数据库。
+- Markdown 默认禁用原始 HTML。
+- HTML 预览会移除 `script`、事件属性和 `javascript:` 链接，并放入沙箱 iframe。
+- 当前版本重点覆盖文档评审闭环，不提供权限系统、团队空间或远程同步。
 
-## Development
-
-Syntax checks:
+## 开发
 
 ```bash
+npm install
 npm run check
 node --check public/app.js
 ```
 
-Project layout:
+项目结构：
 
 ```text
 src/server.js       MCP stdio server and HTTP API
@@ -319,8 +278,6 @@ public/styles.css   Review page styles
 docs/README.zh-CN.md Chinese documentation
 ```
 
-## Markdown Rendering
+## 名字
 
-Markdown preview is rendered with `markdown-it`, not a handwritten parser.
-Common Markdown features such as tables, horizontal rules, code blocks, lists,
-links, and inline formatting are supported. Raw HTML inside Markdown is disabled.
+BT-7274 的名字来自 Titanfall 中的 BT-7274。这个项目的目标也是让人类和 Agent 在一个任务里更紧密地协作：Agent 负责快速生成和修改，人类负责判断、批注和最终确认。
