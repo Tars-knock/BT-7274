@@ -16,6 +16,14 @@ const sessions = new Map();
 const waiters = new Map();
 const sseClients = new Map();
 
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught server error:', error);
+});
+
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled server rejection:', error);
+});
+
 function now() {
   return new Date().toISOString();
 }
@@ -101,8 +109,16 @@ function notify(sessionId, type, payload = {}) {
   const clients = sseClients.get(sessionId) || new Set();
   const data = JSON.stringify({ type, ...payload });
   for (const res of clients) {
-    res.write(`event: ${type}\n`);
-    res.write(`data: ${data}\n\n`);
+    try {
+      if (res.destroyed || res.writableEnded) {
+        clients.delete(res);
+        continue;
+      }
+      res.write(`event: ${type}\n`);
+      res.write(`data: ${data}\n\n`);
+    } catch {
+      clients.delete(res);
+    }
   }
 }
 
@@ -244,6 +260,10 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function notifySoon(sessionId, type, payload = {}) {
+  setImmediate(() => notify(sessionId, type, payload));
+}
+
 function sendError(res, error) {
   sendJson(res, error.code || 400, {
     error: error.message,
@@ -311,6 +331,9 @@ const httpServer = http.createServer(async (req, res) => {
       const clients = sseClients.get(sessionId) || new Set();
       clients.add(res);
       sseClients.set(sessionId, clients);
+      res.on('error', () => {
+        clients.delete(res);
+      });
       req.on('close', () => {
         clients.delete(res);
       });
@@ -342,8 +365,8 @@ const httpServer = http.createServer(async (req, res) => {
         };
         session.comments.push(comment);
         session.updatedAt = createdAt;
-        notify(session.id, 'comment_changed', { session: publicSession(session) });
         sendJson(res, 201, comment);
+        notifySoon(session.id, 'comment_changed', { session: publicSession(session) });
         return;
       }
 
@@ -362,8 +385,8 @@ const httpServer = http.createServer(async (req, res) => {
           comment.comment = String(body.comment ?? comment.comment);
         }
         session.updatedAt = now();
-        notify(session.id, 'comment_changed', { session: publicSession(session) });
         sendJson(res, 200, comment);
+        notifySoon(session.id, 'comment_changed', { session: publicSession(session) });
         return;
       }
 
@@ -373,8 +396,8 @@ const httpServer = http.createServer(async (req, res) => {
         if (comment.status !== 'draft') throw new Error('Only draft comments can be deleted');
         session.comments = session.comments.filter((item) => item.id !== resourceId);
         session.updatedAt = now();
-        notify(session.id, 'comment_changed', { session: publicSession(session) });
         sendJson(res, 200, { ok: true });
+        notifySoon(session.id, 'comment_changed', { session: publicSession(session) });
         return;
       }
 
@@ -406,6 +429,10 @@ const httpServer = http.createServer(async (req, res) => {
 httpServer.listen(port, host, () => {
   console.error(`Review MCP web server listening at ${baseUrl}`);
 });
+
+// Keep the review UI available even if an MCP client closes stdio after creating
+// a session. Review pages still need the HTTP API for comments and approval.
+setInterval(() => {}, 1 << 30);
 
 function toolResult(payload) {
   return {
