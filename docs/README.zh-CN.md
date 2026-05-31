@@ -126,14 +126,15 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 
 1. agent 调用 `create_review_session`，提交 Markdown 或 HTML 文档。
 2. BT-7274 返回 `reviewUrl` 和提示文案。
-3. agent 把 URL 展示给用户，并调用 `wait_for_review` 等待。
+3. agent 把 URL 展示给用户，并立即调用 `wait_for_review` 等待。
 4. 用户在浏览器中打开评审页面。
 5. 用户可以：
    - 圈选文字、创建评论，然后点击 `提交评论`；或
    - 点击 `评审通过`，接受当前版本。
 6. `wait_for_review` 返回 `comments_submitted` 或 `approved`。
 7. 如果用户提交了评论，agent 修改文档后调用 `update_review_document`。
-8. 浏览器页面自动更新到最新版，并可查看 diff 和历史版本。
+8. agent 再次调用 `wait_for_review`，等待下一轮评论或最终通过。
+9. 浏览器页面自动更新到最新版，并可查看 diff 和历史版本。
 
 ## MCP Tools
 
@@ -190,12 +191,21 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
       "context": {
         "prefix": "text before",
         "suffix": "text after"
+      },
+      "position": {
+        "startOffset": 128,
+        "endOffset": 141
       }
     }
   ],
   "generalComment": "Overall feedback"
 }
 ```
+
+`position.startOffset` 和 `position.endOffset` 是针对当前评审版本“预览纯文本”的
+0-based UTF-16 offset。`startOffset` 是闭区间起点，`endOffset` 是开区间终点。
+它们用于配合 `quote`、`prefix`、`suffix` 定位被评论的文本；它们不是字节 offset，
+也不保证等同于 Markdown / HTML 源码中的字符位置。
 
 评审通过时的输出：
 
@@ -291,3 +301,8 @@ public/app.js       浏览器端评审交互
 public/styles.css   评审页面样式
 docs/README.zh-CN.md 中文文档
 ```
+
+## Markdown 渲染
+
+Markdown 预览使用 `markdown-it`，不是手写解析器。常见 Markdown 能力，例如表格、
+分隔线、代码块、列表、链接和行内格式都支持。Markdown 中的原始 HTML 默认禁用。

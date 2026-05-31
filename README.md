@@ -128,7 +128,7 @@ Development configuration from a cloned repository:
 
 1. The agent calls `create_review_session` with a Markdown or HTML document.
 2. BT-7274 returns a `reviewUrl` and an instruction string.
-3. The agent shows the URL to the user and calls `wait_for_review`.
+3. The agent shows the URL to the user and immediately calls `wait_for_review`.
 4. The user opens the review page in a browser.
 5. The user either:
    - selects text, creates comments, and clicks `提交评论`; or
@@ -136,7 +136,8 @@ Development configuration from a cloned repository:
 6. `wait_for_review` returns either `comments_submitted` or `approved`.
 7. If comments were submitted, the agent revises the document and calls
    `update_review_document`.
-8. The browser page updates to the latest version and keeps the previous version
+8. The agent calls `wait_for_review` again for the next review round.
+9. The browser page updates to the latest version and keeps the previous version
    available in the diff/history views.
 
 ## MCP Tools
@@ -194,12 +195,22 @@ Comment submission output:
       "context": {
         "prefix": "text before",
         "suffix": "text after"
+      },
+      "position": {
+        "startOffset": 128,
+        "endOffset": 141
       }
     }
   ],
   "generalComment": "Overall feedback"
 }
 ```
+
+`position.startOffset` and `position.endOffset` are 0-based UTF-16 offsets into
+the rendered preview plain text for the reviewed version. `startOffset` is
+inclusive and `endOffset` is exclusive. These offsets are intended as anchors for
+finding the selected text together with `quote`, `prefix`, and `suffix`; they are
+not byte offsets and are not guaranteed to match Markdown or HTML source offsets.
 
 Approval output:
 
@@ -297,3 +308,9 @@ public/app.js       Browser-side review behavior
 public/styles.css   Review page styles
 docs/README.zh-CN.md Chinese documentation
 ```
+
+## Markdown Rendering
+
+Markdown preview is rendered with `markdown-it`, not a handwritten parser.
+Common Markdown features such as tables, horizontal rules, code blocks, lists,
+links, and inline formatting are supported. Raw HTML inside Markdown is disabled.

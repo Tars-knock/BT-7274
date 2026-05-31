@@ -36,86 +36,6 @@ function slugify(text, index) {
   return slug || `heading-${index}`;
 }
 
-function renderMarkdown(markdown) {
-  const normalized = String(markdown || '').trim().replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i, '$1');
-  const lines = normalized.split(/\r?\n/);
-  const html = [];
-  let inCode = false;
-  let paragraph = [];
-  let listItems = [];
-  let headingIndex = 0;
-
-  const renderInline = (value) => escapeHtml(value)
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-
-  const flushParagraph = () => {
-    if (paragraph.length > 0) {
-      html.push(`<p>${renderInline(paragraph.join(' '))}</p>`);
-      paragraph = [];
-    }
-  };
-
-  const flushList = () => {
-    if (listItems.length > 0) {
-      html.push(`<ul>${listItems.map((item) => `<li>${renderInline(item)}</li>`).join('')}</ul>`);
-      listItems = [];
-    }
-  };
-
-  for (const line of lines) {
-    if (line.startsWith('```')) {
-      flushParagraph();
-      flushList();
-      if (inCode) {
-        html.push('</code></pre>');
-      } else {
-        html.push('<pre><code>');
-      }
-      inCode = !inCode;
-      continue;
-    }
-
-    if (inCode) {
-      html.push(`${escapeHtml(line)}\n`);
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      headingIndex += 1;
-      const level = heading[1].length;
-      const text = heading[2].trim();
-      html.push(`<h${level} id="${slugify(text, headingIndex)}">${escapeHtml(text)}</h${level}>`);
-      continue;
-    }
-
-    if (!line.trim()) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-
-    const listItem = line.match(/^\s*[-*+]\s+(.+)$/);
-    if (listItem) {
-      flushParagraph();
-      listItems.push(listItem[1]);
-      continue;
-    }
-
-    paragraph.push(line.trim());
-  }
-
-  flushParagraph();
-  flushList();
-  if (inCode) html.push('</code></pre>');
-  return html.join('\n');
-}
-
 function sanitizeHtml(html) {
   const template = document.createElement('template');
   template.innerHTML = html;
@@ -176,7 +96,7 @@ function render() {
   els.meta.textContent = `Version ${version.number} · ${state.session.status} · ${state.session.comments.length} comments`;
 
   if (state.session.format === 'markdown') {
-    els.document.innerHTML = renderMarkdown(version.content);
+    els.document.innerHTML = version.renderedHtml || '';
     els.document.onmouseup = () => handleSelection(document, els.document);
     renderToc(els.document);
   } else {
@@ -211,6 +131,10 @@ function renderHtmlFrame(content) {
           h2 { font-size: 22px; }
           h3 { font-size: 20px; }
           p, li { font-size: 16px; line-height: 1.5; }
+          table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; line-height: 1.43; }
+          th, td { border-bottom: 1px solid #dddddd; padding: 12px; text-align: left; vertical-align: top; }
+          th { color: #222222; font-weight: 600; background: #f7f7f7; }
+          hr { height: 1px; border: 0; margin: 32px 0; background: #dddddd; }
           pre { background: #f7f7f7; color: #222222; overflow: auto; padding: 18px; border: 1px solid #dddddd; border-radius: 14px; }
           code { background: #f7f7f7; color: #222222; padding: 2px 6px; border-radius: 8px; }
           pre code { background: transparent; padding: 0; }
@@ -358,6 +282,18 @@ function selectionContext(text, fullText) {
   };
 }
 
+function textOffset(root, targetNode, targetOffset) {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  let node = walker.nextNode();
+  while (node) {
+    if (node === targetNode) return offset + targetOffset;
+    offset += node.nodeValue.length;
+    node = walker.nextNode();
+  }
+  return null;
+}
+
 function handleSelection(selectionDocument, root, frame = null) {
   const selection = selectionDocument.getSelection();
   const quote = selection.toString().trim();
@@ -366,7 +302,14 @@ function handleSelection(selectionDocument, root, frame = null) {
   const rect = range.getBoundingClientRect();
   const frameRect = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
   const fullText = root.textContent;
-  state.selected = { quote, ...selectionContext(quote, fullText) };
+  const startOffset = textOffset(root, range.startContainer, range.startOffset);
+  const endOffset = textOffset(root, range.endContainer, range.endOffset);
+  state.selected = {
+    quote,
+    ...selectionContext(quote, fullText),
+    startOffset,
+    endOffset
+  };
   els.selectedQuote.textContent = quote;
   els.commentInput.value = '';
   els.popover.style.left = `${Math.min(frameRect.left + rect.left, window.innerWidth - 340)}px`;

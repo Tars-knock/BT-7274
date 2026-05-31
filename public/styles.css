@@ -300,6 +300,35 @@ button {
   padding-left: 24px;
 }
 
+.document table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 24px 0;
+  font-size: 14px;
+  line-height: 1.43;
+}
+
+.document th,
+.document td {
+  border-bottom: 1px solid var(--hairline);
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.document th {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--surface-soft);
+}
+
+.document hr {
+  height: 1px;
+  border: 0;
+  margin: 32px 0;
+  background: var(--hairline);
+}
+
 .document pre {
   overflow: auto;
   border: 1px solid var(--hairline);

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import MarkdownIt from 'markdown-it';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const rootDir = normalize(join(__dirname, '..'));
@@ -11,6 +12,12 @@ const publicDir = join(rootDir, 'public');
 const port = Number(process.env.PORT || process.env.REVIEW_MCP_PORT || 8787);
 const host = process.env.REVIEW_MCP_HOST || '127.0.0.1';
 const baseUrl = process.env.REVIEW_MCP_BASE_URL || `http://${host}:${port}`;
+const markdown = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: true,
+  breaks: false
+});
 
 const sessions = new Map();
 const waiters = new Map();
@@ -42,6 +49,13 @@ function normalizeContent(content, format) {
   if (format !== 'markdown') return value;
   const match = value.trim().match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
   return match ? match[1] : value;
+}
+
+function publicVersion(session, version) {
+  return {
+    ...version,
+    renderedHtml: session.format === 'markdown' ? markdown.render(version.content) : null
+  };
 }
 
 function createSession({ title = 'Review document', format, content }) {
@@ -88,7 +102,7 @@ function publicSession(session) {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     currentVersionId: session.currentVersionId,
-    versions: session.versions,
+    versions: session.versions.map((version) => publicVersion(session, version)),
     comments: session.comments,
     batches: session.batches,
     approval: session.approval
@@ -177,6 +191,10 @@ function submitComments(session, generalComment = '') {
       context: {
         prefix: comment.prefix,
         suffix: comment.suffix
+      },
+      position: {
+        startOffset: comment.startOffset ?? null,
+        endOffset: comment.endOffset ?? null
       }
     })),
     generalComment
@@ -360,6 +378,8 @@ const httpServer = http.createServer(async (req, res) => {
           prefix: String(body.prefix || ''),
           suffix: String(body.suffix || ''),
           comment: String(body.comment || ''),
+          startOffset: Number.isFinite(Number(body.startOffset)) ? Number(body.startOffset) : null,
+          endOffset: Number.isFinite(Number(body.endOffset)) ? Number(body.endOffset) : null,
           status: 'draft',
           createdAt
         };
@@ -453,7 +473,7 @@ async function callTool(name, args = {}) {
     return toolResult({
       sessionId: session.id,
       reviewUrl,
-      instruction: `请打开评审页面完成审阅：${reviewUrl}。完成后点击“提交评论”或“评审通过”。`
+      instruction: `Show this URL to the user and ask them to review it in a browser: ${reviewUrl}. Then call wait_for_review with sessionId="${session.id}" and wait for either comments_submitted or approved. If comments_submitted is returned, revise the document, call update_review_document, and then call wait_for_review again until approved.`
     });
   }
 
@@ -519,7 +539,7 @@ const tools = [
   },
   {
     name: 'wait_for_review',
-    description: 'Wait for the reviewer to submit comments or approve the current document.',
+    description: 'Call this immediately after create_review_session. It waits until the human reviewer clicks Submit Comments or Approve in the browser, then returns comments_submitted, approved, or timeout. If comments_submitted is returned, each comment includes quote/context plus position.startOffset and position.endOffset. Offsets are 0-based UTF-16 offsets into the rendered preview plain text for that version; startOffset is inclusive and endOffset is exclusive. They are anchors for locating the reviewed text, not byte offsets and not guaranteed Markdown/HTML source offsets. Revise the document and call update_review_document with the new content, then call wait_for_review again until approved.',
     inputSchema: {
       type: 'object',
       required: ['sessionId'],
@@ -531,7 +551,7 @@ const tools = [
   },
   {
     name: 'update_review_document',
-    description: 'Publish a revised document version to an existing review session.',
+    description: 'Publish a revised document version after receiving comments_submitted from wait_for_review. The review page updates to the latest version; then call wait_for_review again to wait for more comments or approval.',
     inputSchema: {
       type: 'object',
       required: ['sessionId', 'content'],
