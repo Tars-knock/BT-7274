@@ -35,7 +35,7 @@ BT 一样紧密协作。
 ## 快速开始
 
 ```bash
-npx -y bt-7274
+npx -y github:Tars-knock/BT-7274
 ```
 
 评审页面默认监听：
@@ -50,7 +50,7 @@ http://127.0.0.1:8787
 REVIEW_MCP_HOST=127.0.0.1 \
 REVIEW_MCP_PORT=8787 \
 REVIEW_MCP_BASE_URL=http://127.0.0.1:8787 \
-npx -y bt-7274
+npx -y github:Tars-knock/BT-7274
 ```
 
 从 clone 的仓库本地开发时使用：
@@ -61,14 +61,14 @@ npm start
 
 ## MCP Client 配置
 
-包发布到 npm 后，推荐使用 `npx` 配置，不需要用户 clone 仓库或记住本地路径：
+推荐使用 GitHub package source 的 `npx` 配置，不需要用户 clone 仓库或记住本地路径：
 
 ```json
 {
   "mcpServers": {
     "bt-7274": {
       "command": "npx",
-      "args": ["-y", "bt-7274"]
+      "args": ["-y", "github:Tars-knock/BT-7274"]
     }
   }
 }
@@ -85,7 +85,7 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
   "mcp": {
     "bt-7274": {
       "type": "local",
-      "command": ["npx", "-y", "bt-7274"],
+      "command": ["npx", "-y", "github:Tars-knock/BT-7274"],
       "enabled": true
     }
   }

@@ -37,7 +37,7 @@ No npm dependencies are required for the current MVP.
 ## Quick Start
 
 ```bash
-npx -y bt-7274
+npx -y github:Tars-knock/BT-7274
 ```
 
 The HTTP review UI listens on:
@@ -52,7 +52,7 @@ You can override the default host, port, and externally visible base URL:
 REVIEW_MCP_HOST=127.0.0.1 \
 REVIEW_MCP_PORT=8787 \
 REVIEW_MCP_BASE_URL=http://127.0.0.1:8787 \
-npx -y bt-7274
+npx -y github:Tars-knock/BT-7274
 ```
 
 For local development from a cloned repository:
@@ -63,14 +63,14 @@ npm start
 
 ## MCP Client Configuration
 
-Preferred configuration after the package is published to npm:
+Recommended configuration using the GitHub package source:
 
 ```json
 {
   "mcpServers": {
     "bt-7274": {
       "command": "npx",
-      "args": ["-y", "bt-7274"]
+      "args": ["-y", "github:Tars-knock/BT-7274"]
     }
   }
 }
@@ -87,7 +87,7 @@ For BT-7274, add a local MCP server entry:
   "mcp": {
     "bt-7274": {
       "type": "local",
-      "command": ["npx", "-y", "bt-7274"],
+      "command": ["npx", "-y", "github:Tars-knock/BT-7274"],
       "enabled": true
     }
   }
