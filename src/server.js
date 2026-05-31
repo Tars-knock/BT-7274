@@ -9,9 +9,12 @@ import MarkdownIt from 'markdown-it';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const rootDir = normalize(join(__dirname, '..'));
 const publicDir = join(rootDir, 'public');
-const port = Number(process.env.PORT || process.env.REVIEW_MCP_PORT || 8787);
+const requestedPort = Number(process.env.PORT || process.env.REVIEW_MCP_PORT || 8787);
 const host = process.env.REVIEW_MCP_HOST || '127.0.0.1';
-const baseUrl = process.env.REVIEW_MCP_BASE_URL || `http://${host}:${port}`;
+const configuredBaseUrl = process.env.REVIEW_MCP_BASE_URL;
+let webBaseUrl = configuredBaseUrl || `http://${host}:${requestedPort}`;
+let webServerStarted = false;
+let webServerStarting = null;
 const markdown = new MarkdownIt({
   html: false,
   linkify: true,
@@ -22,10 +25,6 @@ const markdown = new MarkdownIt({
 const sessions = new Map();
 const waiters = new Map();
 const sseClients = new Map();
-
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught server error:', error);
-});
 
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled server rejection:', error);
@@ -329,7 +328,7 @@ async function serveStatic(res, pathname) {
 
 const httpServer = http.createServer(async (req, res) => {
   try {
-    const url = new URL(req.url, baseUrl);
+    const url = new URL(req.url, webBaseUrl);
     const pathname = url.pathname;
 
     if (req.method === 'GET' && pathname.startsWith('/review/')) {
@@ -446,9 +445,34 @@ const httpServer = http.createServer(async (req, res) => {
   }
 });
 
-httpServer.listen(port, host, () => {
-  console.error(`Review MCP web server listening at ${baseUrl}`);
-});
+function ensureHttpServer() {
+  if (webServerStarted) return Promise.resolve();
+  if (webServerStarting) return webServerStarting;
+
+  webServerStarting = new Promise((resolve, reject) => {
+    const onError = (error) => {
+      httpServer.off('listening', onListening);
+      webServerStarting = null;
+      reject(new Error(`Failed to start review web server on ${host}:${requestedPort}: ${error.message}`));
+    };
+
+    const onListening = () => {
+      httpServer.off('error', onError);
+      const address = httpServer.address();
+      const actualPort = typeof address === 'object' && address ? address.port : requestedPort;
+      webBaseUrl = configuredBaseUrl || `http://${host}:${actualPort}`;
+      webServerStarted = true;
+      console.error(`Review MCP web server listening at ${webBaseUrl}`);
+      resolve();
+    };
+
+    httpServer.once('error', onError);
+    httpServer.once('listening', onListening);
+    httpServer.listen(requestedPort, host);
+  });
+
+  return webServerStarting;
+}
 
 // Keep the review UI available even if an MCP client closes stdio after creating
 // a session. Review pages still need the HTTP API for comments and approval.
@@ -468,8 +492,9 @@ function toolResult(payload) {
 
 async function callTool(name, args = {}) {
   if (name === 'create_review_session') {
+    await ensureHttpServer();
     const session = createSession(args);
-    const reviewUrl = `${baseUrl}/review/${session.id}`;
+    const reviewUrl = `${webBaseUrl}/review/${session.id}`;
     return toolResult({
       sessionId: session.id,
       reviewUrl,
@@ -511,7 +536,7 @@ async function callTool(name, args = {}) {
     return toolResult({
       sessionId: session.id,
       versionId: version.id,
-      reviewUrl: `${baseUrl}/review/${session.id}`
+      reviewUrl: `${webBaseUrl}/review/${session.id}`
     });
   }
 
@@ -583,7 +608,7 @@ async function handleRpc(message) {
       result: {
         protocolVersion: message.params?.protocolVersion || '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'bt-7274-review-mcp', version: '0.1.0' }
+        serverInfo: { name: 'bt-7274', version: '0.1.0' }
       }
     };
   }
@@ -617,15 +642,27 @@ process.stdin.on('data', (chunk) => {
     newlineIndex = stdinBuffer.indexOf('\n');
     if (!line) continue;
 
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch (error) {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32700, message: error.message }
+      }) + '\n');
+      continue;
+    }
+
     Promise.resolve()
-      .then(() => handleRpc(JSON.parse(line)))
+      .then(() => handleRpc(message))
       .then((response) => {
         if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
       })
       .catch((error) => {
         process.stdout.write(JSON.stringify({
           jsonrpc: '2.0',
-          id: null,
+          id: message.id ?? null,
           error: { code: -32000, message: error.message }
         }) + '\n');
       });
