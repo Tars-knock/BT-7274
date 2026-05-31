@@ -1,20 +1,36 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import MarkdownIt from 'markdown-it';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const rootDir = normalize(join(__dirname, '..'));
 const publicDir = join(rootDir, 'public');
-const port = Number(process.env.PORT || process.env.REVIEW_MCP_PORT || 8787);
+const storageDir = join(rootDir, '.bt-7274', 'sessions');
+const requestedPort = Number(process.env.PORT || process.env.REVIEW_MCP_PORT || 8787);
 const host = process.env.REVIEW_MCP_HOST || '127.0.0.1';
-const baseUrl = process.env.REVIEW_MCP_BASE_URL || `http://${host}:${port}`;
+const configuredBaseUrl = process.env.REVIEW_MCP_BASE_URL;
+let webBaseUrl = configuredBaseUrl || `http://${host}:${requestedPort}`;
+let webServerStarted = false;
+let webServerStarting = null;
+const markdown = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: true,
+  breaks: false
+});
 
 const sessions = new Map();
 const waiters = new Map();
 const sseClients = new Map();
+const persistQueues = new Map();
+
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled server rejection:', error);
+});
 
 function now() {
   return new Date().toISOString();
@@ -24,9 +40,29 @@ function newId(prefix) {
   return `${prefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 }
 
+function normalizeFormat(format) {
+  if (format === 'md') return 'markdown';
+  return format;
+}
+
+function normalizeContent(content, format) {
+  const value = String(content || '');
+  if (format !== 'markdown') return value;
+  const match = value.trim().match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  return match ? match[1] : value;
+}
+
+function publicVersion(session, version) {
+  return {
+    ...version,
+    renderedHtml: session.format === 'markdown' ? markdown.render(version.content) : null
+  };
+}
+
 function createSession({ title = 'Review document', format, content }) {
-  if (!['markdown', 'html'].includes(format)) {
-    throw new Error('format must be "markdown" or "html"');
+  const normalizedFormat = normalizeFormat(format);
+  if (!['markdown', 'html'].includes(normalizedFormat)) {
+    throw new Error('format must be "markdown", "md", or "html"');
   }
 
   const sessionId = newId('session');
@@ -35,7 +71,7 @@ function createSession({ title = 'Review document', format, content }) {
   const session = {
     id: sessionId,
     title,
-    format,
+    format: normalizedFormat,
     status: 'reviewing',
     createdAt,
     updatedAt: createdAt,
@@ -44,7 +80,7 @@ function createSession({ title = 'Review document', format, content }) {
       {
         id: versionId,
         number: 1,
-        content,
+        content: normalizeContent(content, normalizedFormat),
         summary: 'Initial version',
         createdAt
       }
@@ -67,11 +103,53 @@ function publicSession(session) {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     currentVersionId: session.currentVersionId,
-    versions: session.versions,
+    versions: session.versions.map((version) => publicVersion(session, version)),
     comments: session.comments,
     batches: session.batches,
     approval: session.approval
   };
+}
+
+async function persistSession(session) {
+  const payload = JSON.stringify(session, null, 2);
+  const previous = persistQueues.get(session.id) || Promise.resolve();
+  const next = previous.catch(() => {}).then(async () => {
+    await mkdir(storageDir, { recursive: true });
+    const filePath = join(storageDir, `${session.id}.json`);
+    const tempPath = join(storageDir, `${session.id}.${process.pid}.${randomUUID()}.tmp`);
+    await writeFile(tempPath, payload, 'utf8');
+    await rename(tempPath, filePath);
+  });
+  persistQueues.set(session.id, next);
+  try {
+    await next;
+  } finally {
+    if (persistQueues.get(session.id) === next) persistQueues.delete(session.id);
+  }
+}
+
+async function loadPersistedSessions() {
+  try {
+    const entries = await readdir(storageDir, { withFileTypes: true });
+    await Promise.all(entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map(async (entry) => {
+        try {
+          const raw = await readFile(join(storageDir, entry.name), 'utf8');
+          const session = JSON.parse(raw);
+          if (session?.id) {
+            session.pendingAgentEvents ||= [];
+            sessions.set(session.id, session);
+          }
+        } catch (error) {
+          console.error(`Failed to load review session ${entry.name}:`, error);
+        }
+      }));
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error('Failed to load persisted review sessions:', error);
+    }
+  }
 }
 
 function currentVersion(session) {
@@ -84,12 +162,35 @@ function unresolvedComments(session) {
   );
 }
 
+function approvedResult(session) {
+  const version = currentVersion(session);
+  return {
+    status: 'approved',
+    sessionId: session.id,
+    title: session.title,
+    format: session.format,
+    versionId: session.currentVersionId,
+    content: version?.content || '',
+    approvedAt: session.approval.approvedAt,
+    unresolvedCommentCount: session.approval.unresolvedCommentCount,
+    instruction: 'The user approved this version. Use this approved content as the final version for the current task.'
+  };
+}
+
 function notify(sessionId, type, payload = {}) {
   const clients = sseClients.get(sessionId) || new Set();
   const data = JSON.stringify({ type, ...payload });
   for (const res of clients) {
-    res.write(`event: ${type}\n`);
-    res.write(`data: ${data}\n\n`);
+    try {
+      if (res.destroyed || res.writableEnded) {
+        clients.delete(res);
+        continue;
+      }
+      res.write(`event: ${type}\n`);
+      res.write(`data: ${data}\n\n`);
+    } catch {
+      clients.delete(res);
+    }
   }
 }
 
@@ -134,6 +235,7 @@ function submitComments(session, generalComment = '') {
     submittedAt
   };
   session.batches.push(batch);
+  session.status = 'waiting_for_agent';
   session.updatedAt = submittedAt;
 
   const result = {
@@ -148,6 +250,10 @@ function submitComments(session, generalComment = '') {
       context: {
         prefix: comment.prefix,
         suffix: comment.suffix
+      },
+      position: {
+        startOffset: comment.startOffset ?? null,
+        endOffset: comment.endOffset ?? null
       }
     })),
     generalComment
@@ -176,13 +282,7 @@ function approveSession(session, force = false) {
   session.approval = approval;
   session.updatedAt = approvedAt;
 
-  const result = {
-    status: 'approved',
-    sessionId: session.id,
-    versionId: session.currentVersionId,
-    approvedAt,
-    unresolvedCommentCount: unresolved.length
-  };
+  const result = approvedResult(session);
   dispatchAgentEvent(session, result);
   notify(session.id, 'approved', { session: publicSession(session) });
   return result;
@@ -194,7 +294,7 @@ function addVersion(session, content, summary = '') {
   const version = {
     id: `v${versionNumber}`,
     number: versionNumber,
-    content,
+    content: normalizeContent(content, session.format),
     summary,
     createdAt
   };
@@ -207,7 +307,7 @@ function addVersion(session, content, summary = '') {
 
   for (const comment of session.comments) {
     if (comment.versionId === oldVersionId && comment.status === 'submitted') {
-      comment.status = content.includes(comment.quote) ? 'addressed' : 'stale';
+      comment.status = version.content.includes(comment.quote) ? 'addressed' : 'stale';
       comment.addressedByVersionId = version.id;
     }
   }
@@ -229,6 +329,10 @@ function sendJson(res, status, payload) {
     'cache-control': 'no-store'
   });
   res.end(JSON.stringify(payload));
+}
+
+function notifySoon(sessionId, type, payload = {}) {
+  setImmediate(() => notify(sessionId, type, payload));
 }
 
 function sendError(res, error) {
@@ -278,7 +382,7 @@ async function serveStatic(res, pathname) {
 
 const httpServer = http.createServer(async (req, res) => {
   try {
-    const url = new URL(req.url, baseUrl);
+    const url = new URL(req.url, webBaseUrl);
     const pathname = url.pathname;
 
     if (req.method === 'GET' && pathname.startsWith('/review/')) {
@@ -298,6 +402,9 @@ const httpServer = http.createServer(async (req, res) => {
       const clients = sseClients.get(sessionId) || new Set();
       clients.add(res);
       sseClients.set(sessionId, clients);
+      res.on('error', () => {
+        clients.delete(res);
+      });
       req.on('close', () => {
         clients.delete(res);
       });
@@ -324,13 +431,16 @@ const httpServer = http.createServer(async (req, res) => {
           prefix: String(body.prefix || ''),
           suffix: String(body.suffix || ''),
           comment: String(body.comment || ''),
+          startOffset: Number.isFinite(Number(body.startOffset)) ? Number(body.startOffset) : null,
+          endOffset: Number.isFinite(Number(body.endOffset)) ? Number(body.endOffset) : null,
           status: 'draft',
           createdAt
         };
         session.comments.push(comment);
         session.updatedAt = createdAt;
-        notify(session.id, 'comment_changed', { session: publicSession(session) });
+        await persistSession(session);
         sendJson(res, 201, comment);
+        notifySoon(session.id, 'comment_changed', { session: publicSession(session) });
         return;
       }
 
@@ -349,8 +459,9 @@ const httpServer = http.createServer(async (req, res) => {
           comment.comment = String(body.comment ?? comment.comment);
         }
         session.updatedAt = now();
-        notify(session.id, 'comment_changed', { session: publicSession(session) });
+        await persistSession(session);
         sendJson(res, 200, comment);
+        notifySoon(session.id, 'comment_changed', { session: publicSession(session) });
         return;
       }
 
@@ -360,20 +471,25 @@ const httpServer = http.createServer(async (req, res) => {
         if (comment.status !== 'draft') throw new Error('Only draft comments can be deleted');
         session.comments = session.comments.filter((item) => item.id !== resourceId);
         session.updatedAt = now();
-        notify(session.id, 'comment_changed', { session: publicSession(session) });
+        await persistSession(session);
         sendJson(res, 200, { ok: true });
+        notifySoon(session.id, 'comment_changed', { session: publicSession(session) });
         return;
       }
 
       if (req.method === 'POST' && resource === 'submit-comments') {
         const body = await readJson(req);
-        sendJson(res, 200, submitComments(session, String(body.generalComment || '')));
+        const result = submitComments(session, String(body.generalComment || ''));
+        await persistSession(session);
+        sendJson(res, 200, result);
         return;
       }
 
       if (req.method === 'POST' && resource === 'approve') {
         const body = await readJson(req);
-        sendJson(res, 200, approveSession(session, Boolean(body.force)));
+        const result = approveSession(session, Boolean(body.force));
+        await persistSession(session);
+        sendJson(res, 200, result);
         return;
       }
     }
@@ -390,9 +506,40 @@ const httpServer = http.createServer(async (req, res) => {
   }
 });
 
-httpServer.listen(port, host, () => {
-  console.error(`Review MCP web server listening at ${baseUrl}`);
-});
+function ensureHttpServer() {
+  if (webServerStarted) return Promise.resolve();
+  if (webServerStarting) return webServerStarting;
+
+  webServerStarting = new Promise((resolve, reject) => {
+    const onError = (error) => {
+      httpServer.off('listening', onListening);
+      webServerStarting = null;
+      reject(new Error(`Failed to start review web server on ${host}:${requestedPort}: ${error.message}`));
+    };
+
+    const onListening = () => {
+      httpServer.off('error', onError);
+      const address = httpServer.address();
+      const actualPort = typeof address === 'object' && address ? address.port : requestedPort;
+      webBaseUrl = configuredBaseUrl || `http://${host}:${actualPort}`;
+      webServerStarted = true;
+      console.error(`Review MCP web server listening at ${webBaseUrl}`);
+      resolve();
+    };
+
+    httpServer.once('error', onError);
+    httpServer.once('listening', onListening);
+    httpServer.listen(requestedPort, host);
+  });
+
+  return webServerStarting;
+}
+
+await loadPersistedSessions();
+
+// Keep the review UI available even if an MCP client closes stdio after creating
+// a session. Review pages still need the HTTP API for comments and approval.
+setInterval(() => {}, 1 << 30);
 
 function toolResult(payload) {
   return {
@@ -408,35 +555,37 @@ function toolResult(payload) {
 
 async function callTool(name, args = {}) {
   if (name === 'create_review_session') {
+    await ensureHttpServer();
     const session = createSession(args);
-    const reviewUrl = `${baseUrl}/review/${session.id}`;
+    await persistSession(session);
+    const reviewUrl = `${webBaseUrl}/review/${session.id}`;
     return toolResult({
       sessionId: session.id,
       reviewUrl,
-      instruction: `请打开评审页面完成审阅：${reviewUrl}。完成后点击“提交评论”或“评审通过”。`
+      instruction: `Show this URL to the user and ask them to review it in a browser: ${reviewUrl}. Then call wait_for_review with sessionId="${session.id}" and wait for either comments_submitted or approved. If comments_submitted is returned, revise the document, call update_review_document, and then call wait_for_review again until approved.`
     });
   }
 
   if (name === 'wait_for_review') {
     const session = getSessionOrThrow(args.sessionId);
     if (session.pendingAgentEvents.length > 0) {
-      return toolResult(session.pendingAgentEvents.shift());
+      const result = session.pendingAgentEvents.shift();
+      await persistSession(session);
+      return toolResult(result);
     }
     if (session.approval) {
-      return toolResult({
-        status: 'approved',
-        sessionId: session.id,
-        versionId: session.approval.versionId,
-        approvedAt: session.approval.approvedAt,
-        unresolvedCommentCount: session.approval.unresolvedCommentCount
-      });
+      return toolResult(approvedResult(session));
     }
     const timeoutSeconds = Math.max(1, Number(args.timeoutSeconds || 3600));
     const result = await new Promise((resolve) => {
       const timer = setTimeout(() => {
         const pending = waiters.get(session.id) || [];
         waiters.set(session.id, pending.filter((item) => item.resolve !== resolve));
-        resolve({ status: 'timeout', sessionId: session.id });
+        resolve({
+          status: 'timeout',
+          sessionId: session.id,
+          instruction: `Review is still open. Call wait_for_review again with sessionId="${session.id}" unless the user canceled the review.`
+        });
       }, timeoutSeconds * 1000);
       const pending = waiters.get(session.id) || [];
       pending.push({ resolve, timer });
@@ -448,10 +597,11 @@ async function callTool(name, args = {}) {
   if (name === 'update_review_document') {
     const session = getSessionOrThrow(args.sessionId);
     const version = addVersion(session, String(args.content || ''), String(args.summary || ''));
+    await persistSession(session);
     return toolResult({
       sessionId: session.id,
       versionId: version.id,
-      reviewUrl: `${baseUrl}/review/${session.id}`
+      reviewUrl: `${webBaseUrl}/review/${session.id}`
     });
   }
 
@@ -472,14 +622,14 @@ const tools = [
       required: ['format', 'content'],
       properties: {
         title: { type: 'string' },
-        format: { type: 'string', enum: ['markdown', 'html'] },
+          format: { type: 'string', enum: ['markdown', 'md', 'html'] },
         content: { type: 'string' }
       }
     }
   },
   {
     name: 'wait_for_review',
-    description: 'Wait for the reviewer to submit comments or approve the current document.',
+    description: 'Call this immediately after create_review_session. It waits until the human reviewer clicks Submit Comments or Approve in the browser, then returns comments_submitted, approved, or timeout. If timeout is returned, the review is still open; call wait_for_review again with the same sessionId unless the user canceled the review. If comments_submitted is returned, each comment includes quote/context plus position.startOffset and position.endOffset. Offsets are 0-based UTF-16 offsets into the rendered preview plain text for that version; startOffset is inclusive and endOffset is exclusive. They are anchors for locating the reviewed text, not byte offsets and not guaranteed Markdown/HTML source offsets. Revise the document and call update_review_document with the new content, then call wait_for_review again until approved.',
     inputSchema: {
       type: 'object',
       required: ['sessionId'],
@@ -491,7 +641,7 @@ const tools = [
   },
   {
     name: 'update_review_document',
-    description: 'Publish a revised document version to an existing review session.',
+    description: 'Publish a revised document version after receiving comments_submitted from wait_for_review. The review page updates to the latest version; then call wait_for_review again to wait for more comments or approval.',
     inputSchema: {
       type: 'object',
       required: ['sessionId', 'content'],
@@ -523,7 +673,7 @@ async function handleRpc(message) {
       result: {
         protocolVersion: message.params?.protocolVersion || '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'bt-7274-review-mcp', version: '0.1.0' }
+        serverInfo: { name: 'bt-7274', version: '0.1.0' }
       }
     };
   }
@@ -557,15 +707,27 @@ process.stdin.on('data', (chunk) => {
     newlineIndex = stdinBuffer.indexOf('\n');
     if (!line) continue;
 
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch (error) {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32700, message: error.message }
+      }) + '\n');
+      continue;
+    }
+
     Promise.resolve()
-      .then(() => handleRpc(JSON.parse(line)))
+      .then(() => handleRpc(message))
       .then((response) => {
         if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
       })
       .catch((error) => {
         process.stdout.write(JSON.stringify({
           jsonrpc: '2.0',
-          id: null,
+          id: message.id ?? null,
           error: { code: -32000, message: error.message }
         }) + '\n');
       });

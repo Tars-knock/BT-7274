@@ -36,60 +36,6 @@ function slugify(text, index) {
   return slug || `heading-${index}`;
 }
 
-function renderMarkdown(markdown) {
-  const lines = markdown.split(/\r?\n/);
-  const html = [];
-  let inCode = false;
-  let paragraph = [];
-  let headingIndex = 0;
-
-  const flushParagraph = () => {
-    if (paragraph.length > 0) {
-      html.push(`<p>${escapeHtml(paragraph.join(' ')).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>`);
-      paragraph = [];
-    }
-  };
-
-  for (const line of lines) {
-    if (line.startsWith('```')) {
-      flushParagraph();
-      if (inCode) {
-        html.push('</code></pre>');
-      } else {
-        html.push('<pre><code>');
-      }
-      inCode = !inCode;
-      continue;
-    }
-
-    if (inCode) {
-      html.push(`${escapeHtml(line)}\n`);
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      headingIndex += 1;
-      const level = heading[1].length;
-      const text = heading[2].trim();
-      html.push(`<h${level} id="${slugify(text, headingIndex)}">${escapeHtml(text)}</h${level}>`);
-      continue;
-    }
-
-    if (!line.trim()) {
-      flushParagraph();
-      continue;
-    }
-
-    paragraph.push(line.trim());
-  }
-
-  flushParagraph();
-  if (inCode) html.push('</code></pre>');
-  return html.join('\n');
-}
-
 function sanitizeHtml(html) {
   const template = document.createElement('template');
   template.innerHTML = html;
@@ -107,14 +53,29 @@ function currentVersion() {
   return state.session.versions.find((version) => version.id === state.session.currentVersionId);
 }
 
-function setBanner(message) {
+function setBanner(message, state = 'info') {
   if (!message) {
     els.banner.classList.add('hidden');
     els.banner.textContent = '';
+    els.banner.removeAttribute('data-state');
     return;
   }
   els.banner.textContent = message;
+  els.banner.dataset.state = state;
   els.banner.classList.remove('hidden');
+}
+
+function statusLabel(status) {
+  return {
+    reviewing: '评审中',
+    waiting_for_agent: '等待 agent 修改',
+    approved: '已通过'
+  }[status] || status;
+}
+
+function hidePopover() {
+  els.popover.classList.add('hidden');
+  state.selected = null;
 }
 
 async function api(path, options = {}) {
@@ -142,10 +103,10 @@ async function loadSession() {
 function render() {
   const version = currentVersion();
   els.title.textContent = state.session.title;
-  els.meta.textContent = `Version ${version.number} · ${state.session.status} · ${state.session.comments.length} comments`;
+  els.meta.textContent = `Version ${version.number} · ${statusLabel(state.session.status)} · ${state.session.comments.length} comments`;
 
   if (state.session.format === 'markdown') {
-    els.document.innerHTML = renderMarkdown(version.content);
+    els.document.innerHTML = version.renderedHtml || '';
     els.document.onmouseup = () => handleSelection(document, els.document);
     renderToc(els.document);
   } else {
@@ -155,8 +116,16 @@ function render() {
   renderDiff();
   renderHistory();
 
-  if (state.session.status === 'approved') {
-    setBanner(`评审已通过 · Version ${version.number}`);
+  const isWaitingForAgent = state.session.status === 'waiting_for_agent';
+  const isApproved = state.session.status === 'approved';
+  els.submitComments.disabled = isWaitingForAgent || isApproved;
+  els.approveReview.disabled = isWaitingForAgent || isApproved;
+  els.submitComments.textContent = isWaitingForAgent ? '等待修改' : '提交评论';
+
+  if (isWaitingForAgent) {
+    setBanner(`评论已提交 · 正在等待 agent 修改文档`, 'waiting');
+  } else if (isApproved) {
+    setBanner(`评审已通过 · Version ${version.number}`, 'approved');
   } else {
     setBanner('');
   }
@@ -173,10 +142,19 @@ function renderHtmlFrame(content) {
       <head>
         <base target="_blank">
         <style>
-          body { margin: 0; padding: 36px 44px 72px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; color: #20231f; }
-          h1, h2, h3 { line-height: 1.2; margin-top: 1.5em; }
-          pre { background: #1f2521; color: #f6f8f5; overflow: auto; padding: 14px; border-radius: 8px; }
-          code { background: #eef2ea; padding: 2px 4px; border-radius: 4px; }
+          body { margin: 0; padding: 48px 56px 88px; background: #ffffff; font-family: "Airbnb Cereal VF", Circular, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; line-height: 1.5; color: #3f3f3f; }
+          a { color: #222222; text-decoration: underline; text-underline-offset: 3px; }
+          h1, h2, h3, h4, h5, h6 { color: #222222; line-height: 1.2; margin: 1.6em 0 0.65em; font-weight: 600; letter-spacing: 0; }
+          h1 { font-size: 28px; }
+          h2 { font-size: 22px; }
+          h3 { font-size: 20px; }
+          p, li { font-size: 16px; line-height: 1.5; }
+          table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; line-height: 1.43; }
+          th, td { border-bottom: 1px solid #dddddd; padding: 12px; text-align: left; vertical-align: top; }
+          th { color: #222222; font-weight: 600; background: #f7f7f7; }
+          hr { height: 1px; border: 0; margin: 32px 0; background: #dddddd; }
+          pre { background: #f7f7f7; color: #222222; overflow: auto; padding: 18px; border: 1px solid #dddddd; border-radius: 14px; }
+          code { background: #f7f7f7; color: #222222; padding: 2px 6px; border-radius: 8px; }
           pre code { background: transparent; padding: 0; }
         </style>
       </head>
@@ -185,6 +163,9 @@ function renderHtmlFrame(content) {
   `;
   frame.addEventListener('load', () => {
     const frameDoc = frame.contentDocument;
+    frameDoc.addEventListener('mousedown', () => {
+      if (!els.popover.classList.contains('hidden')) hidePopover();
+    });
     frameDoc.addEventListener('mouseup', () => handleSelection(frameDoc, frameDoc.body, frame));
     renderToc(frameDoc.body, frame);
   }, { once: true });
@@ -319,6 +300,18 @@ function selectionContext(text, fullText) {
   };
 }
 
+function textOffset(root, targetNode, targetOffset) {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  let node = walker.nextNode();
+  while (node) {
+    if (node === targetNode) return offset + targetOffset;
+    offset += node.nodeValue.length;
+    node = walker.nextNode();
+  }
+  return null;
+}
+
 function handleSelection(selectionDocument, root, frame = null) {
   const selection = selectionDocument.getSelection();
   const quote = selection.toString().trim();
@@ -327,7 +320,14 @@ function handleSelection(selectionDocument, root, frame = null) {
   const rect = range.getBoundingClientRect();
   const frameRect = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
   const fullText = root.textContent;
-  state.selected = { quote, ...selectionContext(quote, fullText) };
+  const startOffset = textOffset(root, range.startContainer, range.startOffset);
+  const endOffset = textOffset(root, range.endContainer, range.endOffset);
+  state.selected = {
+    quote,
+    ...selectionContext(quote, fullText),
+    startOffset,
+    endOffset
+  };
   els.selectedQuote.textContent = quote;
   els.commentInput.value = '';
   els.popover.style.left = `${Math.min(frameRect.left + rect.left, window.innerWidth - 340)}px`;
@@ -336,20 +336,34 @@ function handleSelection(selectionDocument, root, frame = null) {
 }
 
 document.getElementById('cancelComment').addEventListener('click', () => {
-  els.popover.classList.add('hidden');
-  state.selected = null;
+  hidePopover();
 });
 
 document.getElementById('saveComment').addEventListener('click', async () => {
   if (!state.selected || !els.commentInput.value.trim()) return;
-  await api(`/api/sessions/${state.sessionId}/comments`, {
-    method: 'POST',
-    body: JSON.stringify({ ...state.selected, comment: els.commentInput.value.trim() })
-  });
-  els.popover.classList.add('hidden');
-  state.selected = null;
-  window.getSelection().removeAllRanges();
-  await loadSession();
+  try {
+    await api(`/api/sessions/${state.sessionId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ ...state.selected, comment: els.commentInput.value.trim() })
+    });
+    hidePopover();
+    window.getSelection().removeAllRanges();
+    await loadSession();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.addEventListener('mousedown', (event) => {
+  if (els.popover.classList.contains('hidden')) return;
+  if (els.popover.contains(event.target)) return;
+  hidePopover();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !els.popover.classList.contains('hidden')) {
+    hidePopover();
+  }
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {
