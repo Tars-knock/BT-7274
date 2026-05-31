@@ -170,6 +170,11 @@ Output:
 
 Waits for submitted comments or approval.
 
+If the call times out, the review session remains open. The agent should call
+`wait_for_review` again with the same `sessionId` unless the user canceled the
+review. Submitted comments and approvals are persisted locally, so they can be
+picked up by a later `wait_for_review` call even after the MCP process restarts.
+
 Input:
 
 ```json
@@ -218,9 +223,13 @@ Approval output:
 {
   "status": "approved",
   "sessionId": "session_abc123",
+  "title": "Review document",
+  "format": "markdown",
   "versionId": "v2",
+  "content": "# Approved content\n\n...",
   "approvedAt": "2026-05-30T08:00:00.000Z",
-  "unresolvedCommentCount": 0
+  "unresolvedCommentCount": 0,
+  "instruction": "The user approved this version. Use this approved content as the final version for the current task."
 }
 ```
 
@@ -229,7 +238,8 @@ Timeout output:
 ```json
 {
   "status": "timeout",
-  "sessionId": "session_abc123"
+  "sessionId": "session_abc123",
+  "instruction": "Review is still open. Call wait_for_review again with sessionId=\"session_abc123\" unless the user canceled the review."
 }
 ```
 

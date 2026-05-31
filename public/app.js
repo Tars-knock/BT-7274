@@ -63,6 +63,14 @@ function setBanner(message) {
   els.banner.classList.remove('hidden');
 }
 
+function statusLabel(status) {
+  return {
+    reviewing: '评审中',
+    waiting_for_agent: '等待 agent 修改',
+    approved: '已通过'
+  }[status] || status;
+}
+
 function hidePopover() {
   els.popover.classList.add('hidden');
   state.selected = null;
@@ -93,7 +101,7 @@ async function loadSession() {
 function render() {
   const version = currentVersion();
   els.title.textContent = state.session.title;
-  els.meta.textContent = `Version ${version.number} · ${state.session.status} · ${state.session.comments.length} comments`;
+  els.meta.textContent = `Version ${version.number} · ${statusLabel(state.session.status)} · ${state.session.comments.length} comments`;
 
   if (state.session.format === 'markdown') {
     els.document.innerHTML = version.renderedHtml || '';
@@ -106,7 +114,15 @@ function render() {
   renderDiff();
   renderHistory();
 
-  if (state.session.status === 'approved') {
+  const isWaitingForAgent = state.session.status === 'waiting_for_agent';
+  const isApproved = state.session.status === 'approved';
+  els.submitComments.disabled = isWaitingForAgent || isApproved;
+  els.approveReview.disabled = isWaitingForAgent || isApproved;
+  els.submitComments.textContent = isWaitingForAgent ? '等待修改' : '提交评论';
+
+  if (isWaitingForAgent) {
+    setBanner(`评论已提交 · 正在等待 agent 修改文档`);
+  } else if (isApproved) {
     setBanner(`评审已通过 · Version ${version.number}`);
   } else {
     setBanner('');

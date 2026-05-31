@@ -166,6 +166,10 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 
 等待用户提交评论或评审通过。
 
+如果调用超时，评审 session 仍然保持打开。agent 应使用相同的 `sessionId`
+再次调用 `wait_for_review`，除非用户明确取消了评审。已提交的评论和通过结果会
+持久化到本地，因此即使 MCP 进程重启，也可以被后续的 `wait_for_review` 取回。
+
 输入：
 
 ```json
@@ -213,9 +217,13 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 {
   "status": "approved",
   "sessionId": "session_abc123",
+  "title": "Review document",
+  "format": "markdown",
   "versionId": "v2",
+  "content": "# Approved content\n\n...",
   "approvedAt": "2026-05-30T08:00:00.000Z",
-  "unresolvedCommentCount": 0
+  "unresolvedCommentCount": 0,
+  "instruction": "The user approved this version. Use this approved content as the final version for the current task."
 }
 ```
 
@@ -224,7 +232,8 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 ```json
 {
   "status": "timeout",
-  "sessionId": "session_abc123"
+  "sessionId": "session_abc123",
+  "instruction": "Review is still open. Call wait_for_review again with sessionId=\"session_abc123\" unless the user canceled the review."
 }
 ```
 

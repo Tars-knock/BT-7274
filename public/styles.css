@@ -125,6 +125,14 @@ button {
   background: var(--surface-soft);
 }
 
+.button:disabled,
+.button:disabled:hover {
+  cursor: not-allowed;
+  border-color: var(--hairline);
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
 .button.primary {
   border-color: var(--primary);
   background: var(--primary);
