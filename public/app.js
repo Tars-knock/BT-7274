@@ -53,13 +53,15 @@ function currentVersion() {
   return state.session.versions.find((version) => version.id === state.session.currentVersionId);
 }
 
-function setBanner(message) {
+function setBanner(message, state = 'info') {
   if (!message) {
     els.banner.classList.add('hidden');
     els.banner.textContent = '';
+    els.banner.removeAttribute('data-state');
     return;
   }
   els.banner.textContent = message;
+  els.banner.dataset.state = state;
   els.banner.classList.remove('hidden');
 }
 
@@ -121,9 +123,9 @@ function render() {
   els.submitComments.textContent = isWaitingForAgent ? '等待修改' : '提交评论';
 
   if (isWaitingForAgent) {
-    setBanner(`评论已提交 · 正在等待 agent 修改文档`);
+    setBanner(`评论已提交 · 正在等待 agent 修改文档`, 'waiting');
   } else if (isApproved) {
-    setBanner(`评审已通过 · Version ${version.number}`);
+    setBanner(`评审已通过 · Version ${version.number}`, 'approved');
   } else {
     setBanner('');
   }

@@ -366,15 +366,56 @@ button {
 }
 
 .status-banner {
-  max-width: 920px;
-  margin: 18px auto 0;
-  border: 1px solid #ffd1da;
-  border-radius: 14px;
-  padding: 12px 16px;
-  background: var(--primary-soft);
-  color: var(--primary-active);
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 40;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(520px, calc(100vw - 32px));
+  min-height: 52px;
+  border: 1px solid var(--hairline);
+  border-radius: 9999px;
+  padding: 12px 18px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
   font-size: 14px;
   line-height: 1.43;
+  font-weight: 600;
+}
+
+.status-banner::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.status-banner[data-state="waiting"]::before {
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+.status-banner[data-state="approved"]::before {
+  background: var(--success);
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .hidden {
