@@ -9,6 +9,7 @@ const els = {
   title: document.getElementById('sessionTitle'),
   meta: document.getElementById('versionMeta'),
   document: document.getElementById('document'),
+  documentPanel: document.querySelector('.document-panel'),
   toc: document.getElementById('toc'),
   comments: document.getElementById('commentList'),
   popover: document.getElementById('commentPopover'),
@@ -75,7 +76,34 @@ function statusLabel(status) {
 
 function hidePopover() {
   els.popover.classList.add('hidden');
+  removePopoverListeners();
   state.selected = null;
+}
+
+function addPopoverListeners(selectionDocument, frame = null) {
+  removePopoverListeners();
+  const listeners = [
+    [window, 'scroll', schedulePopoverPosition, true],
+    [window, 'resize', schedulePopoverPosition, false],
+    [els.documentPanel, 'scroll', schedulePopoverPosition, false]
+  ];
+  if (frame?.contentWindow) listeners.push([frame.contentWindow, 'scroll', schedulePopoverPosition, false]);
+  if (selectionDocument !== document) listeners.push([selectionDocument, 'scroll', schedulePopoverPosition, false]);
+
+  for (const [target, event, handler, options] of listeners) {
+    target.addEventListener(event, handler, options);
+  }
+  state.popoverListeners = listeners;
+}
+
+function removePopoverListeners() {
+  if (!state.popoverListeners) return;
+  for (const [target, event, handler, options] of state.popoverListeners) {
+    target.removeEventListener(event, handler, options);
+  }
+  state.popoverListeners = null;
+  if (state.popoverFrame) cancelAnimationFrame(state.popoverFrame);
+  state.popoverFrame = null;
 }
 
 async function api(path, options = {}) {
@@ -108,6 +136,7 @@ function render() {
   if (state.session.format === 'markdown') {
     els.document.innerHTML = version.renderedHtml || '';
     els.document.onmouseup = () => handleSelection(document, els.document);
+    renderCommentAnchors(els.document);
     renderToc(els.document);
   } else {
     renderHtmlFrame(version.content);
@@ -156,6 +185,8 @@ function renderHtmlFrame(content) {
           pre { background: #f7f7f7; color: #222222; overflow: auto; padding: 18px; border: 1px solid #dddddd; border-radius: 14px; }
           code { background: #f7f7f7; color: #222222; padding: 2px 6px; border-radius: 8px; }
           pre code { background: transparent; padding: 0; }
+          .comment-anchor { border-radius: 4px; background: #fff0f3; color: inherit; text-decoration: underline; text-decoration-color: #ff385c; text-decoration-thickness: 2px; text-underline-offset: 3px; cursor: pointer; transition: background-color 140ms ease, box-shadow 140ms ease; }
+          .comment-anchor:hover, .comment-anchor.active { background: #ffd1da; box-shadow: 0 0 0 1px #ff385c; }
         </style>
       </head>
       <body>${html}</body>
@@ -167,6 +198,7 @@ function renderHtmlFrame(content) {
       if (!els.popover.classList.contains('hidden')) hidePopover();
     });
     frameDoc.addEventListener('mouseup', () => handleSelection(frameDoc, frameDoc.body, frame));
+    renderCommentAnchors(frameDoc.body, frame);
     renderToc(frameDoc.body, frame);
   }, { once: true });
 }
@@ -208,10 +240,21 @@ function renderComments() {
   for (const comment of state.session.comments) {
     const card = document.createElement('article');
     card.className = 'comment-card';
+    card.dataset.commentId = comment.id;
+    card.tabIndex = 0;
     card.innerHTML = `
       <div class="comment-status">${escapeHtml(comment.status)} · ${escapeHtml(comment.versionId)}</div>
       <div class="quote">${escapeHtml(comment.quote)}</div>
     `;
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('button, textarea')) return;
+      scrollToCommentAnchor(comment.id);
+    });
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      scrollToCommentAnchor(comment.id);
+    });
     const textarea = document.createElement('textarea');
     textarea.value = comment.comment;
     textarea.disabled = comment.status !== 'draft';
@@ -300,6 +343,21 @@ function selectionContext(text, fullText) {
   };
 }
 
+function selectionContextAt(startOffset, endOffset, fullText, fallbackText) {
+  if (
+    Number.isInteger(startOffset) &&
+    Number.isInteger(endOffset) &&
+    startOffset >= 0 &&
+    endOffset >= startOffset
+  ) {
+    return {
+      prefix: fullText.slice(Math.max(0, startOffset - 80), startOffset),
+      suffix: fullText.slice(endOffset, endOffset + 80)
+    };
+  }
+  return selectionContext(fallbackText, fullText);
+}
+
 function textOffset(root, targetNode, targetOffset) {
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let offset = 0;
@@ -312,27 +370,208 @@ function textOffset(root, targetNode, targetOffset) {
   return null;
 }
 
+function currentVersionComments() {
+  const version = currentVersion();
+  return state.session.comments.filter((comment) =>
+    comment.versionId === version.id &&
+    ['draft', 'submitted', 'addressed', 'stale'].includes(comment.status) &&
+    comment.quote
+  );
+}
+
+function commentOffsets(comment, fullText) {
+  const start = Number(comment.startOffset);
+  const end = Number(comment.endOffset);
+  if (
+    Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    start >= 0 &&
+    end > start &&
+    end <= fullText.length &&
+    fullText.slice(start, end).trim() === String(comment.quote).trim()
+  ) {
+    return { start, end };
+  }
+
+  const quote = String(comment.quote || '').trim();
+  if (!quote) return null;
+
+  const matches = [];
+  let index = fullText.indexOf(quote);
+  while (index >= 0) {
+    matches.push({ start: index, end: index + quote.length });
+    index = fullText.indexOf(quote, index + quote.length);
+  }
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+
+  const prefix = String(comment.prefix || '').slice(-40);
+  const suffix = String(comment.suffix || '').slice(0, 40);
+  return matches
+    .map((match) => {
+      const before = fullText.slice(Math.max(0, match.start - prefix.length), match.start);
+      const after = fullText.slice(match.end, match.end + suffix.length);
+      return {
+        ...match,
+        score: (prefix && before.endsWith(prefix) ? 1 : 0) + (suffix && after.startsWith(suffix) ? 1 : 0)
+      };
+    })
+    .sort((a, b) => b.score - a.score)[0];
+}
+
+function textSegmentsForOffsets(root, startOffset, endOffset) {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+      if (node.parentElement?.closest('script,style,textarea')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const segments = [];
+  let offset = 0;
+  let node = walker.nextNode();
+  while (node && offset < endOffset) {
+    const nextOffset = offset + node.nodeValue.length;
+    if (nextOffset > startOffset && offset < endOffset) {
+      segments.push({
+        node,
+        start: Math.max(0, startOffset - offset),
+        end: Math.min(node.nodeValue.length, endOffset - offset)
+      });
+    }
+    offset = nextOffset;
+    node = walker.nextNode();
+  }
+  return segments.filter((segment) => segment.end > segment.start);
+}
+
+function wrapTextSegment(segment, commentId) {
+  let selectedNode = segment.node;
+  if (segment.end < selectedNode.nodeValue.length) selectedNode.splitText(segment.end);
+  if (segment.start > 0) selectedNode = selectedNode.splitText(segment.start);
+
+  const mark = selectedNode.ownerDocument.createElement('mark');
+  mark.className = 'comment-anchor';
+  mark.dataset.commentId = commentId;
+  mark.tabIndex = 0;
+  selectedNode.parentNode.insertBefore(mark, selectedNode);
+  mark.appendChild(selectedNode);
+  return mark;
+}
+
+function clearActiveComment() {
+  document.querySelectorAll('.comment-card.active, .comment-anchor.active').forEach((node) => {
+    node.classList.remove('active');
+  });
+  const frame = document.getElementById('htmlFrame');
+  frame?.contentDocument?.querySelectorAll('.comment-anchor.active').forEach((node) => {
+    node.classList.remove('active');
+  });
+}
+
+function setActiveComment(commentId) {
+  clearActiveComment();
+  document.querySelectorAll(`[data-comment-id="${CSS.escape(commentId)}"]`).forEach((node) => {
+    node.classList.add('active');
+  });
+  const frame = document.getElementById('htmlFrame');
+  frame?.contentDocument?.querySelectorAll(`[data-comment-id="${CSS.escape(commentId)}"]`).forEach((node) => {
+    node.classList.add('active');
+  });
+}
+
+function scrollToCommentCard(commentId) {
+  const card = els.comments.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
+  if (!card) return;
+  setActiveComment(commentId);
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function scrollToCommentAnchor(commentId) {
+  let anchor = els.document.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
+  let frame = null;
+  if (!anchor) {
+    frame = document.getElementById('htmlFrame');
+    anchor = frame?.contentDocument?.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
+  }
+  if (!anchor) return;
+
+  setActiveComment(commentId);
+  if (frame) frame.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  anchor.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+}
+
+function bindCommentAnchor(anchor, commentId) {
+  anchor.addEventListener('click', () => scrollToCommentCard(commentId));
+  anchor.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    scrollToCommentCard(commentId);
+  });
+}
+
+function renderCommentAnchors(root) {
+  const fullText = root.textContent || '';
+  const comments = currentVersionComments()
+    .map((comment) => ({ comment, offsets: commentOffsets(comment, fullText) }))
+    .filter((item) => item.offsets)
+    .sort((a, b) => b.offsets.start - a.offsets.start);
+
+  for (const { comment, offsets } of comments) {
+    const segments = textSegmentsForOffsets(root, offsets.start, offsets.end);
+    const anchors = segments.map((segment) => wrapTextSegment(segment, comment.id));
+    anchors.forEach((anchor) => bindCommentAnchor(anchor, comment.id));
+  }
+}
+
+function positionPopover() {
+  if (!state.selected?.range || els.popover.classList.contains('hidden')) return;
+  const rect = state.selected.range.getBoundingClientRect();
+  const frameRect = state.selected.frame
+    ? state.selected.frame.getBoundingClientRect()
+    : { left: 0, top: 0 };
+  const popoverRect = els.popover.getBoundingClientRect();
+  const margin = 16;
+  const preferredLeft = frameRect.left + rect.left;
+  const preferredTop = frameRect.top + rect.bottom + 8;
+  const maxLeft = window.innerWidth - popoverRect.width - margin;
+  const maxTop = window.innerHeight - popoverRect.height - margin;
+  const left = Math.max(margin, Math.min(preferredLeft, maxLeft));
+  const top = Math.max(margin, Math.min(preferredTop, maxTop));
+  els.popover.style.left = `${left}px`;
+  els.popover.style.top = `${top}px`;
+}
+
+function schedulePopoverPosition() {
+  if (state.popoverFrame) return;
+  state.popoverFrame = requestAnimationFrame(() => {
+    state.popoverFrame = null;
+    positionPopover();
+  });
+}
+
 function handleSelection(selectionDocument, root, frame = null) {
   const selection = selectionDocument.getSelection();
   const quote = selection.toString().trim();
   if (!quote) return;
   const range = selection.getRangeAt(0);
-  const rect = range.getBoundingClientRect();
-  const frameRect = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
   const fullText = root.textContent;
   const startOffset = textOffset(root, range.startContainer, range.startOffset);
   const endOffset = textOffset(root, range.endContainer, range.endOffset);
   state.selected = {
     quote,
-    ...selectionContext(quote, fullText),
+    ...selectionContextAt(startOffset, endOffset, fullText, quote),
     startOffset,
-    endOffset
+    endOffset,
+    range: range.cloneRange(),
+    selectionDocument,
+    frame
   };
   els.selectedQuote.textContent = quote;
   els.commentInput.value = '';
-  els.popover.style.left = `${Math.min(frameRect.left + rect.left, window.innerWidth - 340)}px`;
-  els.popover.style.top = `${Math.min(frameRect.top + rect.bottom + 8, window.innerHeight - 220)}px`;
   els.popover.classList.remove('hidden');
+  positionPopover();
+  addPopoverListeners(selectionDocument, frame);
 }
 
 document.getElementById('cancelComment').addEventListener('click', () => {
@@ -344,10 +583,17 @@ document.getElementById('saveComment').addEventListener('click', async () => {
   try {
     await api(`/api/sessions/${state.sessionId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ ...state.selected, comment: els.commentInput.value.trim() })
+      body: JSON.stringify({
+        quote: state.selected.quote,
+        prefix: state.selected.prefix,
+        suffix: state.selected.suffix,
+        startOffset: state.selected.startOffset,
+        endOffset: state.selected.endOffset,
+        comment: els.commentInput.value.trim()
+      })
     });
+    state.selected.selectionDocument?.getSelection()?.removeAllRanges();
     hidePopover();
-    window.getSelection().removeAllRanges();
     await loadSession();
   } catch (error) {
     alert(error.message);
