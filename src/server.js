@@ -637,10 +637,6 @@ const tools = [
     inputSchema: {
       type: 'object',
       required: ['format'],
-      oneOf: [
-        { required: ['content'] },
-        { required: ['contentPath'] }
-      ],
       properties: {
         title: { type: 'string' },
         format: { type: 'string', enum: ['markdown', 'md', 'html'] },
@@ -667,10 +663,6 @@ const tools = [
     inputSchema: {
       type: 'object',
       required: ['sessionId'],
-      oneOf: [
-        { required: ['content'] },
-        { required: ['contentPath'] }
-      ],
       properties: {
         sessionId: { type: 'string' },
         content: { type: 'string', description: 'Full revised Markdown or HTML document body.' },
