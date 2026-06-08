@@ -640,8 +640,8 @@ const tools = [
       properties: {
         title: { type: 'string' },
         format: { type: 'string', enum: ['markdown', 'md', 'html'] },
-        content: { type: 'string', description: 'Full Markdown or HTML document body.' },
-        contentPath: { type: 'string', description: 'Absolute path to a UTF-8 file containing the full Markdown or HTML document body. Use this instead of content for large documents.' }
+        content: { type: 'string', description: 'Optional. Full Markdown or HTML document body. Do not provide this when contentPath is provided.' },
+        contentPath: { type: 'string', description: 'Optional. Absolute path to a UTF-8 file containing the full Markdown or HTML document body. Do not provide this when content is provided. Prefer this for large documents.' }
       }
     }
   },
@@ -665,8 +665,8 @@ const tools = [
       required: ['sessionId'],
       properties: {
         sessionId: { type: 'string' },
-        content: { type: 'string', description: 'Full revised Markdown or HTML document body.' },
-        contentPath: { type: 'string', description: 'Absolute path to a UTF-8 file containing the full revised Markdown or HTML document body. Use this instead of content for large documents.' },
+        content: { type: 'string', description: 'Optional. Full revised Markdown or HTML document body. Do not provide this when contentPath is provided.' },
+        contentPath: { type: 'string', description: 'Optional. Absolute path to a UTF-8 file containing the full revised Markdown or HTML document body. Do not provide this when content is provided. Prefer this for large documents.' },
         summary: { type: 'string' }
       }
     }
