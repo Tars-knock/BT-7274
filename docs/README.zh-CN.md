@@ -152,6 +152,18 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 }
 ```
 
+大文档也可以先写入 UTF-8 文件，然后传入绝对路径：
+
+```json
+{
+  "title": "Implementation Plan",
+  "format": "markdown",
+  "contentPath": "/home/user/review-output/plan.md"
+}
+```
+
+`content` 和 `contentPath` 必须二选一。
+
 输出：
 
 ```json
@@ -247,6 +259,16 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 {
   "sessionId": "session_abc123",
   "content": "# Revised Plan\n\n...",
+  "summary": "Addressed review comments"
+}
+```
+
+也可以用 `contentPath` 从 UTF-8 文件读取新版正文：
+
+```json
+{
+  "sessionId": "session_abc123",
+  "contentPath": "/home/user/review-output/revised-plan.md",
   "summary": "Addressed review comments"
 }
 ```

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import http from 'node:http';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { extname, isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
@@ -50,6 +50,21 @@ function normalizeContent(content, format) {
   if (format !== 'markdown') return value;
   const match = value.trim().match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
   return match ? match[1] : value;
+}
+
+async function readToolContent(args) {
+  const hasContent = typeof args.content === 'string';
+  const hasContentPath = typeof args.contentPath === 'string' && args.contentPath.trim() !== '';
+  if (hasContent === hasContentPath) {
+    throw new Error('Provide exactly one of "content" or "contentPath"');
+  }
+  if (hasContent) return args.content;
+
+  const contentPath = args.contentPath.trim();
+  if (!isAbsolute(contentPath)) {
+    throw new Error('contentPath must be an absolute file path');
+  }
+  return readFile(contentPath, 'utf8');
 }
 
 function publicVersion(session, version) {
@@ -556,7 +571,8 @@ function toolResult(payload) {
 async function callTool(name, args = {}) {
   if (name === 'create_review_session') {
     await ensureHttpServer();
-    const session = createSession(args);
+    const content = await readToolContent(args);
+    const session = createSession({ ...args, content });
     await persistSession(session);
     const reviewUrl = `${webBaseUrl}/review/${session.id}`;
     return toolResult({
@@ -596,7 +612,8 @@ async function callTool(name, args = {}) {
 
   if (name === 'update_review_document') {
     const session = getSessionOrThrow(args.sessionId);
-    const version = addVersion(session, String(args.content || ''), String(args.summary || ''));
+    const content = await readToolContent(args);
+    const version = addVersion(session, content, String(args.summary || ''));
     await persistSession(session);
     return toolResult({
       sessionId: session.id,
@@ -616,14 +633,19 @@ async function callTool(name, args = {}) {
 const tools = [
   {
     name: 'create_review_session',
-    description: 'Create a browser-based review session for a Markdown or HTML document.',
+    description: 'Create a browser-based review session for a Markdown or HTML document. Provide exactly one of content or contentPath; use contentPath with an absolute UTF-8 file path for large documents.',
     inputSchema: {
       type: 'object',
-      required: ['format', 'content'],
+      required: ['format'],
+      oneOf: [
+        { required: ['content'] },
+        { required: ['contentPath'] }
+      ],
       properties: {
         title: { type: 'string' },
-          format: { type: 'string', enum: ['markdown', 'md', 'html'] },
-        content: { type: 'string' }
+        format: { type: 'string', enum: ['markdown', 'md', 'html'] },
+        content: { type: 'string', description: 'Full Markdown or HTML document body.' },
+        contentPath: { type: 'string', description: 'Absolute path to a UTF-8 file containing the full Markdown or HTML document body. Use this instead of content for large documents.' }
       }
     }
   },
@@ -641,13 +663,18 @@ const tools = [
   },
   {
     name: 'update_review_document',
-    description: 'Publish a revised document version after receiving comments_submitted from wait_for_review. The review page updates to the latest version; then call wait_for_review again to wait for more comments or approval.',
+    description: 'Publish a revised document version after receiving comments_submitted from wait_for_review. Provide exactly one of content or contentPath; use contentPath with an absolute UTF-8 file path for large documents. The review page updates to the latest version; then call wait_for_review again to wait for more comments or approval.',
     inputSchema: {
       type: 'object',
-      required: ['sessionId', 'content'],
+      required: ['sessionId'],
+      oneOf: [
+        { required: ['content'] },
+        { required: ['contentPath'] }
+      ],
       properties: {
         sessionId: { type: 'string' },
-        content: { type: 'string' },
+        content: { type: 'string', description: 'Full revised Markdown or HTML document body.' },
+        contentPath: { type: 'string', description: 'Absolute path to a UTF-8 file containing the full revised Markdown or HTML document body. Use this instead of content for large documents.' },
         summary: { type: 'string' }
       }
     }

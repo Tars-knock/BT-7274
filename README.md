@@ -146,6 +146,18 @@ opencode 配置：
 
 `format` 支持 `markdown`、`md` 和 `html`。
 
+大文档也可以把正文写入 UTF-8 文件，然后用绝对路径传入：
+
+```json
+{
+  "title": "Implementation Plan",
+  "format": "markdown",
+  "contentPath": "/home/user/review-output/plan.md"
+}
+```
+
+`content` 和 `contentPath` 必须二选一。
+
 ### `wait_for_review`
 
 等待用户提交评论或批准当前版本。
@@ -218,6 +230,16 @@ opencode 配置：
 {
   "sessionId": "session_abc123",
   "content": "# Revised Plan\n\n...",
+  "summary": "Addressed review comments"
+}
+```
+
+也可以用 `contentPath` 从 UTF-8 文件读取新版正文：
+
+```json
+{
+  "sessionId": "session_abc123",
+  "contentPath": "/home/user/review-output/revised-plan.md",
   "summary": "Addressed review comments"
 }
 ```
