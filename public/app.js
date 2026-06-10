@@ -3,6 +3,7 @@ const state = {
   session: null,
   selected: null,
   selectedIntent: 'edit',
+  collapsedThreads: new Set(),
   view: 'preview'
 };
 
@@ -343,21 +344,64 @@ function renderComments() {
   for (const thread of threads) {
     const messages = thread.messages || [];
     const isWaitingForAgent = messages.at(-1)?.role === 'user';
+    const isCollapsed = state.collapsedThreads.has(thread.id);
     const card = document.createElement('article');
     card.className = 'comment-card thread-card';
     card.dataset.threadId = thread.id;
+    card.dataset.commentId = thread.id;
+    card.tabIndex = 0;
     card.innerHTML = `
-      <div class="comment-status">${escapeHtml(intentLabel(thread.intent))} · ${escapeHtml(thread.versionId)} · ${escapeHtml(thread.status)}</div>
-      <div class="quote">${escapeHtml(thread.quote)}</div>
-      <div class="thread-messages">
-        ${messages.map((message) => `
-          <div class="thread-message ${escapeHtml(message.role)}">
-            <div class="thread-role">${message.role === 'agent' ? 'Agent' : '你'}</div>
-            <div class="thread-content">${escapeHtml(message.content)}</div>
-          </div>
-        `).join('')}
+      <div class="thread-header">
+        <div class="comment-status">${escapeHtml(intentLabel(thread.intent))} · ${escapeHtml(thread.versionId)} · ${escapeHtml(thread.status)}</div>
+        <button class="thread-toggle button ghost" type="button">${isCollapsed ? '展开' : '收起'}</button>
       </div>
+      <div class="quote">${escapeHtml(thread.quote)}</div>
     `;
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('button, textarea')) return;
+      scrollToCommentAnchor(thread.id);
+    });
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target.closest('button, textarea')) return;
+      event.preventDefault();
+      scrollToCommentAnchor(thread.id);
+    });
+
+    const toggle = card.querySelector('.thread-toggle');
+    toggle.addEventListener('click', () => {
+      if (state.collapsedThreads.has(thread.id)) {
+        state.collapsedThreads.delete(thread.id);
+      } else {
+        state.collapsedThreads.add(thread.id);
+      }
+      renderComments();
+    });
+
+    if (isCollapsed) {
+      const summary = document.createElement('div');
+      summary.className = 'thread-summary';
+      summary.textContent = `${messages.length} 条消息`;
+      card.appendChild(summary);
+      els.comments.appendChild(card);
+      continue;
+    }
+
+    const messageList = document.createElement('div');
+    messageList.className = 'thread-messages';
+    for (const message of messages) {
+      const messageNode = document.createElement('div');
+      messageNode.className = `thread-message ${message.role}`;
+      const content = message.role === 'agent' && message.renderedHtml
+        ? sanitizeHtml(message.renderedHtml)
+        : escapeHtml(message.content);
+      messageNode.innerHTML = `
+        <div class="thread-role">${message.role === 'agent' ? 'Agent' : '你'}</div>
+        <div class="thread-content ${message.role === 'agent' ? 'markdown-content' : ''}">${content}</div>
+      `;
+      messageList.appendChild(messageNode);
+    }
+    card.appendChild(messageList);
 
     if (thread.status === 'open') {
       if (isWaitingForAgent) {
@@ -465,10 +509,21 @@ function textOffset(root, targetNode, targetOffset) {
 }
 
 function anchorableComments() {
-  return state.session.comments.filter((comment) =>
+  const comments = state.session.comments.filter((comment) =>
     anchorableCommentStatuses.includes(comment.status) &&
     comment.quote
   );
+  const threads = (state.session.threads || [])
+    .filter((thread) => thread.quote)
+    .map((thread) => ({
+      id: thread.id,
+      quote: thread.quote,
+      prefix: thread.context?.prefix || '',
+      suffix: thread.context?.suffix || '',
+      startOffset: thread.position?.startOffset ?? null,
+      endOffset: thread.position?.endOffset ?? null
+    }));
+  return [...comments, ...threads];
 }
 
 function commentOffsets(comment, fullText) {

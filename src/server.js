@@ -74,6 +74,16 @@ function publicVersion(session, version) {
   };
 }
 
+function publicThread(thread) {
+  return {
+    ...thread,
+    messages: (thread.messages || []).map((message) => ({
+      ...message,
+      renderedHtml: message.role === 'agent' ? markdown.render(message.content) : null
+    }))
+  };
+}
+
 function createSession({ title = 'Review document', format, content }) {
   const normalizedFormat = normalizeFormat(format);
   if (!['markdown', 'html'].includes(normalizedFormat)) {
@@ -121,7 +131,7 @@ function publicSession(session) {
     currentVersionId: session.currentVersionId,
     versions: session.versions.map((version) => publicVersion(session, version)),
     comments: session.comments,
-    threads: session.threads,
+    threads: (session.threads || []).map((thread) => publicThread(thread)),
     batches: session.batches,
     approval: session.approval
   };
