@@ -5,6 +5,8 @@ const state = {
   view: 'preview'
 };
 
+const anchorableCommentStatuses = ['draft', 'submitted', 'addressed', 'stale'];
+
 const els = {
   title: document.getElementById('sessionTitle'),
   meta: document.getElementById('versionMeta'),
@@ -187,6 +189,7 @@ function renderHtmlFrame(content) {
           pre code { background: transparent; padding: 0; }
           .comment-anchor { border-radius: 4px; background: #fff0f3; color: inherit; text-decoration: underline; text-decoration-color: #ff385c; text-decoration-thickness: 2px; text-underline-offset: 3px; cursor: pointer; transition: background-color 140ms ease, box-shadow 140ms ease; }
           .comment-anchor:hover, .comment-anchor.active { background: #ffd1da; box-shadow: 0 0 0 1px #ff385c; }
+          .comment-anchor.approximate { text-decoration-style: dashed; }
         </style>
       </head>
       <body>${html}</body>
@@ -370,11 +373,9 @@ function textOffset(root, targetNode, targetOffset) {
   return null;
 }
 
-function currentVersionComments() {
-  const version = currentVersion();
+function anchorableComments() {
   return state.session.comments.filter((comment) =>
-    comment.versionId === version.id &&
-    ['draft', 'submitted', 'addressed', 'stale'].includes(comment.status) &&
+    anchorableCommentStatuses.includes(comment.status) &&
     comment.quote
   );
 }
@@ -419,6 +420,80 @@ function commentOffsets(comment, fullText) {
     .sort((a, b) => b.score - a.score)[0];
 }
 
+function clampedRange(start, end, fullText) {
+  if (fullText.length === 0) return null;
+  const safeStart = Math.max(0, Math.min(fullText.length - 1, start));
+  const safeEnd = Math.max(safeStart + 1, Math.min(fullText.length, end));
+  return { start: safeStart, end: safeEnd };
+}
+
+function allIndexesOf(text, needle) {
+  const indexes = [];
+  let index = text.indexOf(needle);
+  while (index >= 0) {
+    indexes.push(index);
+    index = text.indexOf(needle, index + Math.max(1, needle.length));
+  }
+  return indexes;
+}
+
+function closestIndex(text, needle, target) {
+  if (!needle) return null;
+  const indexes = allIndexesOf(text, needle);
+  if (indexes.length === 0) return null;
+  return indexes.sort((a, b) => Math.abs(a - target) - Math.abs(b - target))[0];
+}
+
+function contextBoundary(text, context, target, side) {
+  const value = String(context || '');
+  const maxLength = Math.min(80, value.length);
+  for (let length = maxLength; length >= 12; length -= 8) {
+    const needle = side === 'prefix' ? value.slice(-length) : value.slice(0, length);
+    const index = closestIndex(text, needle, target);
+    if (index !== null) return side === 'prefix' ? index + needle.length : index;
+  }
+  return null;
+}
+
+function approximateCommentOffsets(comment, fullText) {
+  if (!fullText) return null;
+  const oldStart = Number(comment.startOffset);
+  const oldEnd = Number(comment.endOffset);
+  const hasOldOffsets = Number.isInteger(oldStart) && Number.isInteger(oldEnd) && oldEnd > oldStart;
+  const targetStart = hasOldOffsets ? Math.max(0, Math.min(fullText.length, oldStart)) : 0;
+  const targetEnd = hasOldOffsets ? Math.max(targetStart, Math.min(fullText.length, oldEnd)) : targetStart;
+  const estimateLength = Math.max(12, Math.min(160, String(comment.quote || '').trim().length || targetEnd - targetStart || 32));
+  const prefixEnd = contextBoundary(fullText, comment.prefix, targetStart, 'prefix');
+  const suffixStart = contextBoundary(fullText, comment.suffix, targetEnd, 'suffix');
+
+  if (prefixEnd !== null && suffixStart !== null) {
+    if (prefixEnd < suffixStart && suffixStart - prefixEnd <= Math.max(240, estimateLength * 3)) {
+      return { ...clampedRange(prefixEnd, suffixStart, fullText), approximate: true };
+    }
+    return { ...clampedRange(prefixEnd, prefixEnd + estimateLength, fullText), approximate: true };
+  }
+
+  if (prefixEnd !== null) {
+    return { ...clampedRange(prefixEnd, prefixEnd + estimateLength, fullText), approximate: true };
+  }
+
+  if (suffixStart !== null) {
+    return { ...clampedRange(suffixStart - estimateLength, suffixStart, fullText), approximate: true };
+  }
+
+  if (hasOldOffsets) {
+    return { ...clampedRange(targetStart, targetStart + estimateLength, fullText), approximate: true };
+  }
+
+  return null;
+}
+
+function commentAnchorOffsets(comment, fullText) {
+  const exact = commentOffsets(comment, fullText);
+  if (exact) return exact;
+  return approximateCommentOffsets(comment, fullText);
+}
+
 function textSegmentsForOffsets(root, startOffset, endOffset) {
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -445,13 +520,13 @@ function textSegmentsForOffsets(root, startOffset, endOffset) {
   return segments.filter((segment) => segment.end > segment.start);
 }
 
-function wrapTextSegment(segment, commentId) {
+function wrapTextSegment(segment, commentId, approximate = false) {
   let selectedNode = segment.node;
   if (segment.end < selectedNode.nodeValue.length) selectedNode.splitText(segment.end);
   if (segment.start > 0) selectedNode = selectedNode.splitText(segment.start);
 
   const mark = selectedNode.ownerDocument.createElement('mark');
-  mark.className = 'comment-anchor';
+  mark.className = approximate ? 'comment-anchor approximate' : 'comment-anchor';
   mark.dataset.commentId = commentId;
   mark.tabIndex = 0;
   selectedNode.parentNode.insertBefore(mark, selectedNode);
@@ -512,14 +587,14 @@ function bindCommentAnchor(anchor, commentId) {
 
 function renderCommentAnchors(root) {
   const fullText = root.textContent || '';
-  const comments = currentVersionComments()
-    .map((comment) => ({ comment, offsets: commentOffsets(comment, fullText) }))
+  const comments = anchorableComments()
+    .map((comment) => ({ comment, offsets: commentAnchorOffsets(comment, fullText) }))
     .filter((item) => item.offsets)
     .sort((a, b) => b.offsets.start - a.offsets.start);
 
   for (const { comment, offsets } of comments) {
     const segments = textSegmentsForOffsets(root, offsets.start, offsets.end);
-    const anchors = segments.map((segment) => wrapTextSegment(segment, comment.id));
+    const anchors = segments.map((segment) => wrapTextSegment(segment, comment.id, offsets.approximate));
     anchors.forEach((anchor) => bindCommentAnchor(anchor, comment.id));
   }
 }

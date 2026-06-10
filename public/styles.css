@@ -378,6 +378,10 @@ button {
   box-shadow: 0 0 0 1px var(--primary);
 }
 
+.comment-anchor.approximate {
+  text-decoration-style: dashed;
+}
+
 .html-frame {
   width: 100%;
   min-height: calc(100vh - 150px);
