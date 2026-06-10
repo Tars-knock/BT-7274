@@ -684,6 +684,38 @@ button {
   line-height: 1.43;
 }
 
+.thread-waiting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-top: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 9999px;
+  padding: 10px 14px;
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.29;
+  font-weight: 600;
+}
+
+.thread-waiting-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 2px solid var(--primary-disabled);
+  border-top-color: var(--primary);
+  border-radius: 9999px;
+  animation: thread-waiting-spin 800ms linear infinite;
+}
+
+@keyframes thread-waiting-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .diff,
 .history {
   max-width: 1040px;

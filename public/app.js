@@ -341,6 +341,8 @@ function renderComments() {
   }
 
   for (const thread of threads) {
+    const messages = thread.messages || [];
+    const isWaitingForAgent = messages.at(-1)?.role === 'user';
     const card = document.createElement('article');
     card.className = 'comment-card thread-card';
     card.dataset.threadId = thread.id;
@@ -348,7 +350,7 @@ function renderComments() {
       <div class="comment-status">${escapeHtml(intentLabel(thread.intent))} · ${escapeHtml(thread.versionId)} · ${escapeHtml(thread.status)}</div>
       <div class="quote">${escapeHtml(thread.quote)}</div>
       <div class="thread-messages">
-        ${(thread.messages || []).map((message) => `
+        ${messages.map((message) => `
           <div class="thread-message ${escapeHtml(message.role)}">
             <div class="thread-role">${message.role === 'agent' ? 'Agent' : '你'}</div>
             <div class="thread-content">${escapeHtml(message.content)}</div>
@@ -358,6 +360,18 @@ function renderComments() {
     `;
 
     if (thread.status === 'open') {
+      if (isWaitingForAgent) {
+        const waiting = document.createElement('div');
+        waiting.className = 'thread-waiting';
+        waiting.innerHTML = `
+          <span class="thread-waiting-spinner" aria-hidden="true"></span>
+          <span>等待 AI 回复</span>
+        `;
+        card.appendChild(waiting);
+        els.comments.appendChild(card);
+        continue;
+      }
+
       const form = document.createElement('form');
       form.className = 'thread-reply';
       form.innerHTML = `
