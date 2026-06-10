@@ -463,7 +463,8 @@ button {
 
 .general-comment:focus,
 .comment-card textarea:focus,
-.popover textarea:focus {
+.popover textarea:focus,
+.thread-reply textarea:focus {
   border-color: var(--ink);
   box-shadow: 0 0 0 2px rgba(34, 34, 34, 0.08);
 }
@@ -476,6 +477,14 @@ button {
 .comment-list {
   display: grid;
   gap: 12px;
+}
+
+.feedback-heading {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.23;
+  font-weight: 700;
 }
 
 .comment-card {
@@ -577,11 +586,102 @@ button {
   line-height: 1.43;
 }
 
+.intent-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 9999px;
+  background: var(--surface-soft);
+}
+
+.intent-tab {
+  min-width: 0;
+  min-height: 34px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.23;
+  font-weight: 600;
+}
+
+.intent-tab:hover,
+.intent-tab.active {
+  background: var(--canvas);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
 .popover-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+.thread-card {
+  cursor: default;
+}
+
+.thread-card:hover {
+  border-color: var(--hairline);
+  box-shadow: none;
+}
+
+.thread-messages {
+  display: grid;
+  gap: 10px;
+}
+
+.thread-message {
+  display: grid;
+  gap: 4px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--surface-soft);
+}
+
+.thread-message.agent {
+  background: var(--primary-soft);
+}
+
+.thread-role {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.18;
+  font-weight: 700;
+}
+
+.thread-content {
+  white-space: pre-wrap;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.43;
+}
+
+.thread-reply {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.thread-reply textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 12px;
+  background: var(--canvas);
+  color: var(--ink);
+  outline: none;
+  font-size: 14px;
+  line-height: 1.43;
 }
 
 .diff,

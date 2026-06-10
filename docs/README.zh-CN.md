@@ -7,8 +7,8 @@ Markdown / HTML 文档。
 BT 一样紧密协作。
 
 它会创建一个浏览器评审页面。开发者可以在页面中预览文档、通过左侧目录树跳转
-章节、圈选文字、添加多条评论、一次性提交评论，或者直接评审通过当前版本。agent
-可以等待评审结果，根据评论修改文档，并把新版发布回同一个评审 session。
+章节、圈选文字、添加修改评论、即时提问或发起讨论，或者直接评审通过当前版本。agent
+可以等待评审结果，根据修改评论更新文档，也可以直接回复讨论线程。
 
 [English README](../README.md)
 
@@ -16,8 +16,9 @@ BT 一样紧密协作。
 
 - 支持 Markdown 和 HTML 文档评审
 - 浏览器预览，左侧自动生成标题目录树
-- 支持圈选文字并添加评论
+- 支持圈选文字并选择 `要求修改`、`提问` 或 `讨论`
 - 通过统一的 `提交评论` 按钮批量提交评论
+- 提问和讨论会立即通知 agent，并在右侧形成可继续追问的线程
 - 通过 `评审通过` 明确接受当前版本
 - 有未解决评论时点击通过会弹出确认提示
 - 支持版本历史和与上一版的 diff
@@ -129,12 +130,14 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 3. agent 把 URL 展示给用户，并立即调用 `wait_for_review` 等待。
 4. 用户在浏览器中打开评审页面。
 5. 用户可以：
-   - 圈选文字、创建评论，然后点击 `提交评论`；或
+   - 圈选文字、选择 `要求修改` 创建草稿评论，然后点击 `提交评论`；或
+   - 圈选文字、选择 `提问` / `讨论` 立即通知 agent；或
    - 点击 `评审通过`，接受当前版本。
-6. `wait_for_review` 返回 `comments_submitted` 或 `approved`。
-7. 如果用户提交了评论，agent 修改文档后调用 `update_review_document`。
-8. agent 再次调用 `wait_for_review`，等待下一轮评论或最终通过。
-9. 浏览器页面自动更新到最新版，并可查看 diff 和历史版本。
+6. `wait_for_review` 返回 `comments_submitted`、`discussion_requested` 或 `approved`。
+7. 如果用户提交了修改评论，agent 修改文档后调用 `update_review_document`。
+8. 如果用户发起讨论，agent 调用 `reply_to_review_thread` 回复，不需要发布新版本。
+9. agent 再次调用 `wait_for_review`，等待下一轮评论、讨论或最终通过。
+10. 浏览器页面自动更新到最新版，并可查看 diff 和历史版本。
 
 ## MCP Tools
 
@@ -170,13 +173,13 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 {
   "sessionId": "session_abc123",
   "reviewUrl": "http://127.0.0.1:8787/review/session_abc123",
-  "instruction": "请打开评审页面完成审阅：http://127.0.0.1:8787/review/session_abc123。完成后点击“提交评论”或“评审通过”。"
+  "instruction": "Show this URL to the user..."
 }
 ```
 
 ### `wait_for_review`
 
-等待用户提交评论或评审通过。
+等待用户提交修改评论、发起/继续讨论线程或评审通过。
 
 如果调用超时，评审 session 仍然保持打开。agent 应使用相同的 `sessionId`
 再次调用 `wait_for_review`，除非用户明确取消了评审。已提交的评论和通过结果会
@@ -217,6 +220,31 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
   "generalComment": "Overall feedback"
 }
 ```
+
+用户提问或发起讨论时的输出：
+
+```json
+{
+  "status": "discussion_requested",
+  "sessionId": "session_abc123",
+  "versionId": "v1",
+  "threadId": "thread_abc123",
+  "intent": "question",
+  "quote": "selected text",
+  "message": "这里为什么这么设计？",
+  "context": {
+    "prefix": "text before",
+    "suffix": "text after"
+  },
+  "position": {
+    "startOffset": 128,
+    "endOffset": 141
+  },
+  "instruction": "Reply to this review thread..."
+}
+```
+
+`message` 只包含最新的用户消息；完整线程历史可通过 `get_review_session` 读取。
 
 `position.startOffset` 和 `position.endOffset` 是针对当前评审版本“预览纯文本”的
 0-based UTF-16 offset。`startOffset` 是闭区间起点，`endOffset` 是开区间终点。
@@ -283,9 +311,34 @@ opencode 的 MCP 配置位于 `opencode.jsonc` 的 `mcp` 字段下。BT-7274 可
 }
 ```
 
+### `reply_to_review_thread`
+
+回复 `discussion_requested` 线程，不创建新文档版本。
+
+输入：
+
+```json
+{
+  "sessionId": "session_abc123",
+  "threadId": "thread_abc123",
+  "message": "这里选择 A 的原因是..."
+}
+```
+
+输出：
+
+```json
+{
+  "sessionId": "session_abc123",
+  "threadId": "thread_abc123",
+  "messageId": "message_abc123",
+  "status": "thread_replied"
+}
+```
+
 ### `get_review_session`
 
-返回当前 session 状态，包括版本、评论、批次和通过状态。
+返回当前 session 状态，包括版本、评论、讨论线程、批次和通过状态。
 
 输入：
 

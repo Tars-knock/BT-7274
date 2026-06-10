@@ -2,6 +2,7 @@ const state = {
   sessionId: location.pathname.split('/').filter(Boolean).pop(),
   session: null,
   selected: null,
+  selectedIntent: 'edit',
   view: 'preview'
 };
 
@@ -76,6 +77,23 @@ function statusLabel(status) {
   }[status] || status;
 }
 
+function intentLabel(intent) {
+  return {
+    edit: '要求修改',
+    question: '提问',
+    challenge: '讨论'
+  }[intent] || intent;
+}
+
+function setPopoverIntent(intent) {
+  state.selectedIntent = intent;
+  document.querySelectorAll('.intent-tab').forEach((button) => {
+    button.classList.toggle('active', button.dataset.intent === intent);
+  });
+  els.commentInput.placeholder = intent === 'edit' ? '写下需要修改的内容' : '写下你的问题或讨论内容';
+  document.getElementById('saveComment').textContent = intent === 'edit' ? '保存评论' : '发送';
+}
+
 function hidePopover() {
   els.popover.classList.add('hidden');
   removePopoverListeners();
@@ -133,7 +151,8 @@ async function loadSession() {
 function render() {
   const version = currentVersion();
   els.title.textContent = state.session.title;
-  els.meta.textContent = `Version ${version.number} · ${statusLabel(state.session.status)} · ${state.session.comments.length} comments`;
+  const threadCount = state.session.threads?.length || 0;
+  els.meta.textContent = `Version ${version.number} · ${statusLabel(state.session.status)} · ${state.session.comments.length} comments · ${threadCount} threads`;
 
   if (state.session.format === 'markdown') {
     els.document.innerHTML = version.renderedHtml || '';
@@ -232,15 +251,24 @@ function renderToc(root, frame = null) {
 
 function renderComments() {
   els.comments.innerHTML = '';
-  if (state.session.comments.length === 0) {
+  const comments = state.session.comments || [];
+  const threads = state.session.threads || [];
+  if (comments.length === 0 && threads.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'toc empty';
-    empty.textContent = 'No comments';
+    empty.textContent = '暂无反馈';
     els.comments.appendChild(empty);
     return;
   }
 
-  for (const comment of state.session.comments) {
+  if (comments.length > 0) {
+    const heading = document.createElement('div');
+    heading.className = 'feedback-heading';
+    heading.textContent = '修改评论';
+    els.comments.appendChild(heading);
+  }
+
+  for (const comment of comments) {
     const card = document.createElement('article');
     card.className = 'comment-card';
     card.dataset.commentId = comment.id;
@@ -268,7 +296,7 @@ function renderComments() {
       actions.className = 'comment-actions';
       const save = document.createElement('button');
       save.className = 'button';
-      save.textContent = 'Save';
+      save.textContent = '保存';
       save.addEventListener('click', async () => {
         await api(`/api/sessions/${state.sessionId}/comments/${comment.id}`, {
           method: 'PATCH',
@@ -278,7 +306,7 @@ function renderComments() {
       });
       const del = document.createElement('button');
       del.className = 'button ghost';
-      del.textContent = 'Delete';
+      del.textContent = '删除';
       del.addEventListener('click', async () => {
         await api(`/api/sessions/${state.sessionId}/comments/${comment.id}`, { method: 'DELETE' });
         await loadSession();
@@ -290,7 +318,7 @@ function renderComments() {
       actions.className = 'comment-actions';
       const resolve = document.createElement('button');
       resolve.className = 'button';
-      resolve.textContent = 'Resolve';
+      resolve.textContent = '解决';
       resolve.addEventListener('click', async () => {
         await api(`/api/sessions/${state.sessionId}/comments/${comment.id}`, {
           method: 'PATCH',
@@ -300,6 +328,55 @@ function renderComments() {
       });
       actions.appendChild(resolve);
       card.appendChild(actions);
+    }
+
+    els.comments.appendChild(card);
+  }
+
+  if (threads.length > 0) {
+    const heading = document.createElement('div');
+    heading.className = 'feedback-heading';
+    heading.textContent = '讨论线程';
+    els.comments.appendChild(heading);
+  }
+
+  for (const thread of threads) {
+    const card = document.createElement('article');
+    card.className = 'comment-card thread-card';
+    card.dataset.threadId = thread.id;
+    card.innerHTML = `
+      <div class="comment-status">${escapeHtml(intentLabel(thread.intent))} · ${escapeHtml(thread.versionId)} · ${escapeHtml(thread.status)}</div>
+      <div class="quote">${escapeHtml(thread.quote)}</div>
+      <div class="thread-messages">
+        ${(thread.messages || []).map((message) => `
+          <div class="thread-message ${escapeHtml(message.role)}">
+            <div class="thread-role">${message.role === 'agent' ? 'Agent' : '你'}</div>
+            <div class="thread-content">${escapeHtml(message.content)}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    if (thread.status === 'open') {
+      const form = document.createElement('form');
+      form.className = 'thread-reply';
+      form.innerHTML = `
+        <textarea placeholder="继续讨论"></textarea>
+        <button class="button primary" type="submit">发送</button>
+      `;
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const textarea = form.querySelector('textarea');
+        const content = textarea.value.trim();
+        if (!content) return;
+        await api(`/api/sessions/${state.sessionId}/threads/${thread.id}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ content })
+        });
+        textarea.value = '';
+        await loadSession();
+      });
+      card.appendChild(form);
     }
 
     els.comments.appendChild(card);
@@ -644,6 +721,7 @@ function handleSelection(selectionDocument, root, frame = null) {
   };
   els.selectedQuote.textContent = quote;
   els.commentInput.value = '';
+  setPopoverIntent('edit');
   els.popover.classList.remove('hidden');
   positionPopover();
   addPopoverListeners(selectionDocument, frame);
@@ -653,20 +731,38 @@ document.getElementById('cancelComment').addEventListener('click', () => {
   hidePopover();
 });
 
+document.querySelectorAll('.intent-tab').forEach((button) => {
+  button.addEventListener('click', () => setPopoverIntent(button.dataset.intent));
+});
+
 document.getElementById('saveComment').addEventListener('click', async () => {
   if (!state.selected || !els.commentInput.value.trim()) return;
   try {
-    await api(`/api/sessions/${state.sessionId}/comments`, {
-      method: 'POST',
-      body: JSON.stringify({
-        quote: state.selected.quote,
-        prefix: state.selected.prefix,
-        suffix: state.selected.suffix,
-        startOffset: state.selected.startOffset,
-        endOffset: state.selected.endOffset,
-        comment: els.commentInput.value.trim()
-      })
-    });
+    const selectionPayload = {
+      quote: state.selected.quote,
+      prefix: state.selected.prefix,
+      suffix: state.selected.suffix,
+      startOffset: state.selected.startOffset,
+      endOffset: state.selected.endOffset
+    };
+    if (state.selectedIntent === 'edit') {
+      await api(`/api/sessions/${state.sessionId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...selectionPayload,
+          comment: els.commentInput.value.trim()
+        })
+      });
+    } else {
+      await api(`/api/sessions/${state.sessionId}/threads`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...selectionPayload,
+          intent: state.selectedIntent,
+          message: els.commentInput.value.trim()
+        })
+      });
+    }
     state.selected.selectionDocument?.getSelection()?.removeAllRanges();
     hidePopover();
     await loadSession();
@@ -730,6 +826,7 @@ events.addEventListener('version_updated', loadSession);
 events.addEventListener('approved', loadSession);
 events.addEventListener('comments_submitted', loadSession);
 events.addEventListener('comment_changed', loadSession);
+events.addEventListener('thread_changed', loadSession);
 
 loadSession().catch((error) => {
   els.document.innerHTML = `<p>${escapeHtml(error.message)}</p>`;

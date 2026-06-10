@@ -101,6 +101,7 @@ function createSession({ title = 'Review document', format, content }) {
       }
     ],
     comments: [],
+    threads: [],
     batches: [],
     pendingAgentEvents: [],
     approval: null
@@ -120,6 +121,7 @@ function publicSession(session) {
     currentVersionId: session.currentVersionId,
     versions: session.versions.map((version) => publicVersion(session, version)),
     comments: session.comments,
+    threads: session.threads,
     batches: session.batches,
     approval: session.approval
   };
@@ -154,6 +156,7 @@ async function loadPersistedSessions() {
           const session = JSON.parse(raw);
           if (session?.id) {
             session.pendingAgentEvents ||= [];
+            session.threads ||= [];
             sessions.set(session.id, session);
           }
         } catch (error) {
@@ -276,6 +279,84 @@ function submitComments(session, generalComment = '') {
   dispatchAgentEvent(session, result);
   notify(session.id, 'comments_submitted', { session: publicSession(session) });
   return result;
+}
+
+function normalizeThreadIntent(intent) {
+  if (intent === 'question' || intent === 'challenge') return intent;
+  throw new Error('intent must be "question" or "challenge"');
+}
+
+function discussionEvent(session, thread, message) {
+  return {
+    status: 'discussion_requested',
+    sessionId: session.id,
+    versionId: thread.versionId,
+    threadId: thread.id,
+    intent: thread.intent,
+    quote: thread.quote,
+    message: message.content,
+    context: thread.context,
+    position: thread.position,
+    instruction: 'Reply to this review thread. Use existing conversation context if available. If needed, call get_review_session to inspect the persisted thread. Do not update the document unless the user explicitly asks for a change.'
+  };
+}
+
+function createThread(session, body) {
+  const createdAt = now();
+  const content = String(body.message || '').trim();
+  if (!content) throw new Error('message is required');
+
+  const message = {
+    id: newId('message'),
+    role: 'user',
+    content,
+    createdAt
+  };
+  const thread = {
+    id: newId('thread'),
+    versionId: session.currentVersionId,
+    quote: String(body.quote || ''),
+    context: {
+      prefix: String(body.prefix || ''),
+      suffix: String(body.suffix || '')
+    },
+    position: {
+      startOffset: Number.isFinite(Number(body.startOffset)) ? Number(body.startOffset) : null,
+      endOffset: Number.isFinite(Number(body.endOffset)) ? Number(body.endOffset) : null
+    },
+    intent: normalizeThreadIntent(body.intent),
+    status: 'open',
+    messages: [message],
+    createdAt,
+    updatedAt: createdAt
+  };
+  session.threads.push(thread);
+  session.updatedAt = createdAt;
+  dispatchAgentEvent(session, discussionEvent(session, thread, message));
+  notify(session.id, 'thread_changed', { session: publicSession(session) });
+  return thread;
+}
+
+function appendThreadMessage(session, threadId, role, content) {
+  const thread = session.threads.find((item) => item.id === threadId);
+  if (!thread) throw Object.assign(new Error('Thread not found'), { code: 404 });
+  if (thread.status !== 'open') throw new Error('Only open threads can receive messages');
+
+  const createdAt = now();
+  const message = {
+    id: newId('message'),
+    role,
+    content: String(content || '').trim(),
+    createdAt
+  };
+  if (!message.content) throw new Error('content is required');
+
+  thread.messages.push(message);
+  thread.updatedAt = createdAt;
+  session.updatedAt = createdAt;
+  if (role === 'user') dispatchAgentEvent(session, discussionEvent(session, thread, message));
+  notify(session.id, 'thread_changed', { session: publicSession(session) });
+  return { thread, message };
 }
 
 function approveSession(session, force = false) {
@@ -426,9 +507,9 @@ const httpServer = http.createServer(async (req, res) => {
       return;
     }
 
-    const apiMatch = pathname.match(/^\/api\/sessions\/([^/]+)(?:\/([^/]+)(?:\/([^/]+))?)?$/);
+    const apiMatch = pathname.match(/^\/api\/sessions\/([^/]+)(?:\/([^/]+)(?:\/([^/]+)(?:\/([^/]+))?)?)?$/);
     if (apiMatch) {
-      const [, sessionId, resource, resourceId] = apiMatch;
+      const [, sessionId, resource, resourceId, subresource] = apiMatch;
       const session = getSessionOrThrow(sessionId);
 
       if (req.method === 'GET' && !resource) {
@@ -456,6 +537,22 @@ const httpServer = http.createServer(async (req, res) => {
         await persistSession(session);
         sendJson(res, 201, comment);
         notifySoon(session.id, 'comment_changed', { session: publicSession(session) });
+        return;
+      }
+
+      if (req.method === 'POST' && resource === 'threads' && !resourceId) {
+        const body = await readJson(req);
+        const thread = createThread(session, body);
+        await persistSession(session);
+        sendJson(res, 201, thread);
+        return;
+      }
+
+      if (req.method === 'POST' && resource === 'threads' && resourceId && subresource === 'messages') {
+        const body = await readJson(req);
+        const { message } = appendThreadMessage(session, resourceId, 'user', body.content);
+        await persistSession(session);
+        sendJson(res, 201, message);
         return;
       }
 
@@ -578,11 +675,12 @@ async function callTool(name, args = {}) {
     return toolResult({
       sessionId: session.id,
       reviewUrl,
-      instruction: `Show this URL to the user and ask them to review it in a browser: ${reviewUrl}. Then call wait_for_review with sessionId="${session.id}" and wait for either comments_submitted or approved. If comments_submitted is returned, revise the document, call update_review_document, and then call wait_for_review again until approved.`
+      instruction: `Show this URL to the user and ask them to review it in a browser: ${reviewUrl}. Then call wait_for_review with sessionId="${session.id}" and wait for comments_submitted, discussion_requested, or approved. If comments_submitted is returned, revise the document, call update_review_document, and then call wait_for_review again. If discussion_requested is returned, reply with reply_to_review_thread and then call wait_for_review again. Continue until approved.`
     });
   }
 
   if (name === 'wait_for_review') {
+    await ensureHttpServer();
     const session = getSessionOrThrow(args.sessionId);
     if (session.pendingAgentEvents.length > 0) {
       const result = session.pendingAgentEvents.shift();
@@ -622,6 +720,19 @@ async function callTool(name, args = {}) {
     });
   }
 
+  if (name === 'reply_to_review_thread') {
+    const session = getSessionOrThrow(args.sessionId);
+    const { thread, message } = appendThreadMessage(session, args.threadId, 'agent', args.message);
+    await persistSession(session);
+    return toolResult({
+      sessionId: session.id,
+      threadId: thread.id,
+      messageId: message.id,
+      status: 'thread_replied',
+      instruction: `Reply posted to the review thread. Call wait_for_review again with sessionId="${session.id}" unless the review is complete.`
+    });
+  }
+
   if (name === 'get_review_session') {
     const session = getSessionOrThrow(args.sessionId);
     return toolResult(publicSession(session));
@@ -633,7 +744,7 @@ async function callTool(name, args = {}) {
 const tools = [
   {
     name: 'create_review_session',
-    description: 'Create a browser-based review session for a Markdown or HTML document. Provide exactly one of content or contentPath; use contentPath with an absolute UTF-8 file path for large documents.',
+    description: 'Create a browser-based review session for a Markdown or HTML document. Provide exactly one of content or contentPath; use contentPath with an absolute UTF-8 file path for large documents. After creating the session, call wait_for_review repeatedly until approved; discussion_requested events should be answered with reply_to_review_thread, while comments_submitted events usually require update_review_document.',
     inputSchema: {
       type: 'object',
       required: ['format'],
@@ -647,7 +758,7 @@ const tools = [
   },
   {
     name: 'wait_for_review',
-    description: 'Call this immediately after create_review_session. It waits until the human reviewer clicks Submit Comments or Approve in the browser, then returns comments_submitted, approved, or timeout. If timeout is returned, the review is still open; call wait_for_review again with the same sessionId unless the user canceled the review. If comments_submitted is returned, each comment includes quote/context plus position.startOffset and position.endOffset. Offsets are 0-based UTF-16 offsets into the rendered preview plain text for that version; startOffset is inclusive and endOffset is exclusive. They are anchors for locating the reviewed text, not byte offsets and not guaranteed Markdown/HTML source offsets. Revise the document and call update_review_document with the new content, then call wait_for_review again until approved.',
+    description: 'Call this immediately after create_review_session. It waits until the human reviewer submits edit comments, starts or continues a discussion thread, or approves in the browser, then returns comments_submitted, discussion_requested, approved, or timeout. comments_submitted is only for edit feedback and usually requires revising the document with update_review_document. discussion_requested is for explanation, challenge, debate, or clarification; reply with reply_to_review_thread and do not update the document unless the user explicitly asks for a change. If timeout is returned, the review is still open; call wait_for_review again with the same sessionId unless the user canceled the review. Comment and discussion anchors include quote/context plus position.startOffset and position.endOffset. Offsets are 0-based UTF-16 offsets into the rendered preview plain text for that version; startOffset is inclusive and endOffset is exclusive. They are anchors for locating the reviewed text, not byte offsets and not guaranteed Markdown/HTML source offsets. After update_review_document or reply_to_review_thread, call wait_for_review again until approved.',
     inputSchema: {
       type: 'object',
       required: ['sessionId'],
@@ -672,8 +783,21 @@ const tools = [
     }
   },
   {
+    name: 'reply_to_review_thread',
+    description: 'Send an agent reply to a discussion_requested review thread. This appends an agent message to the thread, updates the review UI, does not create a document version, and does not set the session to waiting_for_agent.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId', 'threadId', 'message'],
+      properties: {
+        sessionId: { type: 'string' },
+        threadId: { type: 'string' },
+        message: { type: 'string' }
+      }
+    }
+  },
+  {
     name: 'get_review_session',
-    description: 'Return the current review session state.',
+    description: 'Return the current review session state, including persisted comments, threads, and thread messages.',
     inputSchema: {
       type: 'object',
       required: ['sessionId'],
